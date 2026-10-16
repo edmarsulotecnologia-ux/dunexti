@@ -53,13 +53,9 @@ import {
   MessageCircle,
   Download,
   Share2,
-  Globe,
-  Laptop,
-  Bookmark,
-  Sparkles,
-  ShieldCheck,
-  HelpCircle,
-  Info
+  BellRing,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { cn } from './lib/utils';
@@ -79,6 +75,76 @@ interface Ticket {
   endTime?: any;
   solution?: string;
   recommendation?: string;
+}
+
+// In-memory 16-bit PCM WAV Chime Generator (Guarantees zero-network audio playback in all browsers)
+function createAlarmWavDataUri(): string {
+  const sampleRate = 22050;
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  
+  // High attention pattern: 3 urgent acoustic chimes
+  const pattern = [
+    { freq: 880, dur: 0.12 },
+    { freq: 0, dur: 0.04 },
+    { freq: 1174.66, dur: 0.12 },
+    { freq: 0, dur: 0.04 },
+    { freq: 1760, dur: 0.25 },
+    { freq: 0, dur: 0.12 },
+    { freq: 880, dur: 0.12 },
+    { freq: 0, dur: 0.04 },
+    { freq: 1174.66, dur: 0.12 },
+    { freq: 0, dur: 0.04 },
+    { freq: 1760, dur: 0.35 }
+  ];
+
+  let totalDuration = 0;
+  for (const p of pattern) totalDuration += p.dur;
+  const totalSamples = Math.floor(sampleRate * totalDuration);
+  const dataByteLength = totalSamples * numChannels * (bitsPerSample / 8);
+  const buffer = new ArrayBuffer(44 + dataByteLength);
+  const view = new DataView(buffer);
+
+  // RIFF header
+  view.setUint32(0, 0x52494646, false); // "RIFF"
+  view.setUint32(4, 36 + dataByteLength, true);
+  view.setUint32(8, 0x57415645, false); // "WAVE"
+  // fmt chunk
+  view.setUint32(12, 0x666d7420, false); // "fmt "
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // Linear PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
+  view.setUint16(32, numChannels * (bitsPerSample / 8), true);
+  view.setUint16(34, bitsPerSample, true);
+  // data chunk
+  view.setUint32(36, 0x64617461, false); // "data"
+  view.setUint32(40, dataByteLength, true);
+
+  // Synthesize PCM samples with envelope
+  let sampleIndex = 0;
+  for (const seg of pattern) {
+    const segSamples = Math.floor(sampleRate * seg.dur);
+    for (let i = 0; i < segSamples; i++) {
+      let sample = 0;
+      if (seg.freq > 0) {
+        const t = i / sampleRate;
+        const envelope = Math.sin((Math.PI * i) / segSamples);
+        sample = Math.sin(2 * Math.PI * seg.freq * t) * envelope * 0.85;
+      }
+      const intSample = Math.max(-32768, Math.min(32767, Math.floor(sample * 32767)));
+      view.setInt16(44 + sampleIndex * 2, intSample, true);
+      sampleIndex++;
+    }
+  }
+
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return 'data:audio/wav;base64,' + btoa(binary);
 }
 
 export default function App() {
@@ -117,13 +183,6 @@ export default function App() {
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
   const [copiedLink, setCopiedLink] = useState(false);
 
-  // Online Access & Direct Internet Deployment State
-  const [showOnlineAccessModal, setShowOnlineAccessModal] = useState(false);
-  const [copiedTechLink, setCopiedTechLink] = useState(false);
-  const [showCustomDomainHelp, setShowCustomDomainHelp] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isInstallable, setIsInstallable] = useState(false);
-
   // Client History State
   const [searchWhatsapp, setSearchWhatsapp] = useState('');
   const [clientHistory, setClientHistory] = useState<Ticket[]>([]);
@@ -141,11 +200,271 @@ export default function App() {
   const [recommendation, setRecommendation] = useState('');
   const [status, setStatus] = useState<Ticket['status']>('completed');
 
-  // Notification State
+  // Notification & Alarm Sound State
   const initialTicketsLoaded = React.useRef(false);
-  const processedTicketIds = React.useRef<Set<string>>(new Set());
+  const knownTicketIdsRef = React.useRef<Set<string>>(new Set());
+  const [alarmSoundEnabled, setAlarmSoundEnabled] = useState(() => {
+    try {
+      return localStorage.getItem('dunex_alarm_sound') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const [activeAlarmTicket, setActiveAlarmTicket] = useState<Ticket | null>(null);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+
+  // Synchronize live refs to avoid stale closures in Firestore onSnapshot
+  const viewRef = React.useRef(view);
+  const isTechLoggedInRef = React.useRef(isTechLoggedIn);
+  const userRef = React.useRef(user);
+  const alarmSoundEnabledRef = React.useRef(alarmSoundEnabled);
+  const audioCtxRef = React.useRef<AudioContext | null>(null);
+  const lastAlarmTicketIdRef = React.useRef<string>('');
+  const lastAlarmTimeRef = React.useRef<number>(0);
+
+  // Pre-generate in-memory alarm chime
+  const alarmWavDataUri = React.useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return createAlarmWavDataUri();
+    } catch {
+      return '';
+    }
+  }, []);
 
   useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
+    isTechLoggedInRef.current = isTechLoggedIn;
+  }, [isTechLoggedIn]);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    alarmSoundEnabledRef.current = alarmSoundEnabled;
+    try {
+      localStorage.setItem('dunex_alarm_sound', String(alarmSoundEnabled));
+    } catch {}
+  }, [alarmSoundEnabled]);
+
+  // Unlock Audio on first user interaction anywhere in the page
+  useEffect(() => {
+    const handleUserInteraction = () => {
+      try {
+        const ctx = getAudioContext();
+        if (ctx && ctx.state === 'suspended') {
+          ctx.resume().then(() => setAudioUnlocked(true)).catch(() => {});
+        } else if (ctx && ctx.state === 'running') {
+          setAudioUnlocked(true);
+        }
+      } catch {}
+    };
+
+    window.addEventListener('click', handleUserInteraction, { passive: true });
+    window.addEventListener('touchstart', handleUserInteraction, { passive: true });
+    window.addEventListener('keydown', handleUserInteraction, { passive: true });
+
+    return () => {
+      window.removeEventListener('click', handleUserInteraction);
+      window.removeEventListener('touchstart', handleUserInteraction);
+      window.removeEventListener('keydown', handleUserInteraction);
+    };
+  }, []);
+
+  // Audio Context & Synthesized Multi-Tone Alarm Generator
+  const getAudioContext = () => {
+    if (typeof window === 'undefined') return null;
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return null;
+    if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+      audioCtxRef.current = new AudioCtx();
+    }
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(() => {});
+    }
+    return audioCtxRef.current;
+  };
+
+  const playAlarmSound = () => {
+    // 1. Play in-memory synthesized WAV chime via HTML5 Audio (works seamlessly in all browsers)
+    try {
+      if (alarmWavDataUri) {
+        const audio = new Audio(alarmWavDataUri);
+        audio.volume = 1.0;
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.warn("HTML5 audio playback error:", e);
+    }
+
+    // 2. Play multi-tone oscillator chimes via Web Audio API
+    try {
+      const ctx = getAudioContext();
+      if (ctx) {
+        if (ctx.state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
+        const scheduleAlarmBurst = (offsetSec: number) => {
+          const now = ctx.currentTime + offsetSec;
+
+          // Note 1: Urgent Alert Pulse (987.77 Hz - B5)
+          const osc1 = ctx.createOscillator();
+          const gain1 = ctx.createGain();
+          osc1.type = 'triangle';
+          osc1.frequency.setValueAtTime(987.77, now);
+          gain1.gain.setValueAtTime(0.001, now);
+          gain1.gain.exponentialRampToValueAtTime(0.35, now + 0.02);
+          gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+          osc1.connect(gain1);
+          gain1.connect(ctx.destination);
+          osc1.start(now);
+          osc1.stop(now + 0.18);
+
+          // Note 2: Higher Attention Tone (1318.51 Hz - E6)
+          const osc2 = ctx.createOscillator();
+          const gain2 = ctx.createGain();
+          osc2.type = 'sine';
+          osc2.frequency.setValueAtTime(1318.51, now + 0.14);
+          gain2.gain.setValueAtTime(0.001, now + 0.14);
+          gain2.gain.exponentialRampToValueAtTime(0.45, now + 0.17);
+          gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+          osc2.connect(gain2);
+          gain2.connect(ctx.destination);
+          osc2.start(now + 0.14);
+          osc2.stop(now + 0.38);
+
+          // Note 3: Resonant Alarm Bell (1760 Hz - A6)
+          const osc3 = ctx.createOscillator();
+          const gain3 = ctx.createGain();
+          osc3.type = 'triangle';
+          osc3.frequency.setValueAtTime(1760, now + 0.28);
+          gain3.gain.setValueAtTime(0.001, now + 0.28);
+          gain3.gain.exponentialRampToValueAtTime(0.5, now + 0.31);
+          gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
+          osc3.connect(gain3);
+          gain3.connect(ctx.destination);
+          osc3.start(now + 0.28);
+          osc3.stop(now + 0.78);
+        };
+
+        scheduleAlarmBurst(0);
+        scheduleAlarmBurst(0.65);
+        scheduleAlarmBurst(1.30);
+      }
+    } catch (err) {
+      console.warn("Web Audio alarm generation error:", err);
+    }
+  };
+
+  const handleTestAlarm = () => {
+    // Unlock browser audio context on user gesture
+    getAudioContext();
+    setAudioUnlocked(true);
+    playAlarmSound();
+    toast.success('🔊 Alarme Sonoro Testado com Sucesso!', {
+      description: 'O som de alerta de chamado tocou nos alto-falantes.',
+      duration: 4000
+    });
+  };
+
+  // Immediate handler for newly incoming ticket alarm
+  const handleIncomingTicketAlarm = (ticket: Ticket) => {
+    const now = Date.now();
+    // Avoid double-ringing for the same ticket within 4 seconds
+    if (lastAlarmTicketIdRef.current === ticket.id && now - lastAlarmTimeRef.current < 4000) {
+      return;
+    }
+    lastAlarmTicketIdRef.current = ticket.id;
+    lastAlarmTimeRef.current = now;
+
+    if (alarmSoundEnabledRef.current) {
+      playAlarmSound();
+    }
+    setActiveAlarmTicket(ticket);
+    toast.error(`🚨 NOVO CHAMADO: ${ticket.clientName}`, {
+      description: `Equipamento: ${ticket.equipment} - ${ticket.problem?.slice(0, 70)}...`,
+      duration: 15000,
+      icon: <BellRing className="text-red-600 animate-pulse" size={20} />,
+      action: {
+        label: 'Ver no Painel',
+        onClick: () => {
+          setActiveAlarmTicket(null);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      }
+    });
+  };
+
+  // Blinking tab title when an active alarm is pending
+  useEffect(() => {
+    if (!activeAlarmTicket) {
+      document.title = 'DUNEX-TI - Sistema de Chamados de Manutenção';
+      return;
+    }
+    let isOriginal = false;
+    const interval = setInterval(() => {
+      document.title = isOriginal 
+        ? 'DUNEX-TI - Sistema de Chamados de Manutenção'
+        : `🚨 NOVO CHAMADO: ${activeAlarmTicket.clientName}!`;
+      isOriginal = !isOriginal;
+    }, 900);
+    return () => {
+      clearInterval(interval);
+      document.title = 'DUNEX-TI - Sistema de Chamados de Manutenção';
+    };
+  }, [activeAlarmTicket]);
+
+  useEffect(() => {
+    // 1. Cross-tab BroadcastChannel listener (para disparo instantâneo quando aba do cliente enviar chamado)
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('dunex_tickets_realtime');
+        bc.onmessage = (event) => {
+          if (event.data && (isTechLoggedInRef.current || viewRef.current === 'technician')) {
+            handleIncomingTicketAlarm({
+              id: event.data.id,
+              clientName: event.data.clientName,
+              equipment: event.data.equipment,
+              problem: event.data.problem,
+              status: 'pending',
+              whatsapp: event.data.whatsapp || ''
+            });
+          }
+        };
+      } catch (err) {
+        console.warn('BroadcastChannel error:', err);
+      }
+    }
+
+    // 2. Storage event listener (fallback instantâneo entre abas do mesmo navegador)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'dunex_ticket_realtime_event' && e.newValue) {
+        try {
+          const data = JSON.parse(e.newValue);
+          if (isTechLoggedInRef.current || viewRef.current === 'technician') {
+            handleIncomingTicketAlarm({
+              id: data.id,
+              clientName: data.clientName,
+              equipment: data.equipment,
+              problem: data.problem,
+              status: 'pending',
+              whatsapp: data.whatsapp || ''
+            });
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    // 3. Auth listener
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
@@ -157,6 +476,7 @@ export default function App() {
       setLoading(false);
     });
 
+    // 4. Firestore real-time onSnapshot listener (para qualquer dispositivo online)
     const q = query(collection(db, 'tickets'), orderBy('createdAt', 'desc'));
     const unsubscribeTickets = onSnapshot(q, (snapshot) => {
       const ticketsData = snapshot.docs.map(doc => ({
@@ -164,35 +484,27 @@ export default function App() {
         ...doc.data()
       })) as Ticket[];
       
-      // Notification logic
-      if (initialTicketsLoaded.current && view === 'technician' && (user || isTechLoggedIn)) {
+      // Real-time alarm notification on ticket addition
+      if (initialTicketsLoaded.current) {
         snapshot.docChanges().forEach((change) => {
           if (change.type === 'added') {
-            const newTicket = change.doc.data() as Ticket;
-            if (newTicket.status === 'pending') {
-              toast.info('Novo Chamado Recebido!', {
-                description: `Cliente: ${newTicket.clientName} - Equipamento: ${newTicket.equipment}`,
-                duration: 10000,
-                icon: <Bell className="text-[#0056b3]" size={18} />,
-                action: {
-                  label: 'Ver Chamados',
-                  onClick: () => window.scrollTo({ top: 0, behavior: 'smooth' })
+            const newId = change.doc.id;
+            const isNewDoc = !knownTicketIdsRef.current.has(newId);
+            knownTicketIdsRef.current.add(newId);
+
+            if (isNewDoc) {
+              const newTicket = { id: newId, ...change.doc.data() } as Ticket;
+              if (newTicket.status === 'pending') {
+                if (isTechLoggedInRef.current || viewRef.current === 'technician') {
+                  handleIncomingTicketAlarm(newTicket);
                 }
-              });
-              
-              // Play a subtle notification sound if browser allows
-              try {
-                const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
-                audio.play();
-              } catch (e) {
-                console.log("Audio playback blocked by browser");
               }
             }
           }
         });
-      }
-      
-      if (!initialTicketsLoaded.current && snapshot.docs.length > 0) {
+      } else {
+        // Inicializa conjunto com os IDs existentes para não apitar nos chamados antigos já carregados
+        snapshot.docs.forEach(doc => knownTicketIdsRef.current.add(doc.id));
         initialTicketsLoaded.current = true;
       }
 
@@ -200,6 +512,8 @@ export default function App() {
     });
 
     return () => {
+      if (bc) bc.close();
+      window.removeEventListener('storage', handleStorageChange);
       unsubscribeAuth();
       unsubscribeTickets();
     };
@@ -231,76 +545,11 @@ export default function App() {
     } catch {}
   }, []);
 
-  // Capture PWA install event
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setIsInstallable(true);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    };
-  }, []);
-
-  const getPublicBaseUrl = () => {
-    if (typeof window !== 'undefined') {
-      const origin = window.location.origin;
-      if (origin.includes('ais-dev-')) {
-        return origin.replace('ais-dev-', 'ais-pre-');
-      }
-      return origin;
-    }
-    return 'https://ais-pre-c3feqekoa3gvxbgrdmy76b-272434718853.us-east1.run.app';
-  };
-
   const getClientShareUrl = () => {
-    return `${getPublicBaseUrl()}?modo=cliente`;
-  };
-
-  const getTechShareUrl = () => {
-    return `${getPublicBaseUrl()}?modo=tecnico`;
-  };
-
-  const handleCopyTechLink = async () => {
-    const url = getTechShareUrl();
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopiedTechLink(true);
-      toast.success('Link do Técnico copiado! Salve nos seus favoritos.');
-      setTimeout(() => setCopiedTechLink(false), 2500);
-    } catch {
-      const input = document.createElement('input');
-      input.value = url;
-      document.body.appendChild(input);
-      input.select();
-      document.execCommand('copy');
-      document.body.removeChild(input);
-      setCopiedTechLink(true);
-      toast.success('Link do Técnico copiado!');
-      setTimeout(() => setCopiedTechLink(false), 2500);
+    if (typeof window !== 'undefined') {
+      return `${window.location.origin}?modo=cliente`;
     }
-  };
-
-  const handleInstallApp = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      try {
-        const choice = await deferredPrompt.userChoice;
-        if (choice && choice.outcome === 'accepted') {
-          toast.success('DUNEX-TI instalado como aplicativo com sucesso!');
-          setIsInstallable(false);
-        }
-      } catch (err) {
-        console.error('Install prompt error:', err);
-      }
-      setDeferredPrompt(null);
-    } else {
-      setShowOnlineAccessModal(true);
-    }
+    return 'https://ais-pre-c3feqekoa3gvxbgrdmy76b-272434718853.us-east1.run.app?modo=cliente';
   };
 
   const formatPhoneNumber = (value: string) => {
@@ -432,6 +681,31 @@ export default function App() {
         status: 'pending'
       });
       const shortId = docRef.id.slice(0, 6).toUpperCase();
+
+      // Dispara sinal imediato em tempo real para a aba do técnico (mesmo computador ou abas vizinhas)
+      try {
+        const ticketAlertPayload = {
+          id: docRef.id,
+          shortId,
+          clientName,
+          equipment,
+          problem,
+          status: 'pending',
+          whatsapp,
+          timestamp: Date.now()
+        };
+        if (typeof window !== 'undefined') {
+          if ('BroadcastChannel' in window) {
+            const channel = new BroadcastChannel('dunex_tickets_realtime');
+            channel.postMessage(ticketAlertPayload);
+            channel.close();
+          }
+          localStorage.setItem('dunex_ticket_realtime_event', JSON.stringify(ticketAlertPayload));
+        }
+      } catch (broadcastErr) {
+        console.warn('Realtime broadcast error:', broadcastErr);
+      }
+
       setSubmittedTicketInfo({
         protocol: shortId,
         clientName,
@@ -581,28 +855,6 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-2">
-            {/* Botão Ativar / Acessar na Internet sem IA Studio */}
-            <button
-              onClick={() => setShowOnlineAccessModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition-all cursor-pointer shadow-xs"
-              title="Acessar aplicativo direto na internet sem precisar do IA Studio e instalar no celular"
-            >
-              <Globe size={15} className="text-emerald-600 animate-pulse" />
-              <span className="hidden sm:inline">Ativar na Internet</span>
-              <span className="sm:hidden">Online 24h</span>
-            </button>
-
-            {isInstallable && (
-              <button
-                onClick={handleInstallApp}
-                className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer shadow-xs"
-                title="Instalar DUNEX-TI no dispositivo"
-              >
-                <Smartphone size={14} />
-                <span>Instalar App</span>
-              </button>
-            )}
-
             <button
               onClick={() => setShowShareModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50/70 hover:bg-blue-100/80 text-[#0056b3] text-xs font-bold transition-all cursor-pointer shadow-xs"
@@ -949,67 +1201,134 @@ export default function App() {
               </div>
             ) : (
               <>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                   <div>
                     <h2 className="text-2xl font-bold">Painel do Técnico</h2>
-                    <p className="text-gray-500">Gerenciamento de chamados em tempo real</p>
+                    <p className="text-gray-500 text-sm">Gerenciamento de chamados em tempo real</p>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <button 
-                      onClick={() => setShowOnlineAccessModal(true)}
-                      className="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-3.5 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all cursor-pointer shadow-xs"
-                      title="Acessar aplicativo direto na internet sem precisar do IA Studio e instalar no celular"
+                    {/* Alarme Sonoro Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextState = !alarmSoundEnabled;
+                        setAlarmSoundEnabled(nextState);
+                        if (nextState) {
+                          toast.success('Alarme sonoro ativado! O sistema emitirá um som ao receber novos chamados.');
+                          playAlarmSound();
+                        } else {
+                          toast.info('Alarme sonoro silenciado.');
+                        }
+                      }}
+                      className={cn(
+                        "px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs border",
+                        alarmSoundEnabled 
+                          ? "bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300" 
+                          : "bg-gray-100 hover:bg-gray-200 text-gray-500 border-gray-200"
+                      )}
+                      title={alarmSoundEnabled ? "Alarme sonoro ativado (clique para silenciar)" : "Alarme sonoro silenciado (clique para ativar)"}
                     >
-                      <Globe size={16} className="text-emerald-600 animate-pulse" />
-                      <span>Ativar na Internet / Instalar</span>
+                      {alarmSoundEnabled ? (
+                        <>
+                          <BellRing size={15} className="text-amber-600 animate-pulse" />
+                          <span>Alarme: Ativo</span>
+                        </>
+                      ) : (
+                        <>
+                          <VolumeX size={15} className="text-gray-400" />
+                          <span>Alarme: Mudo</span>
+                        </>
+                      )}
                     </button>
+
+                    {/* Testar Som do Alarme */}
+                    <button
+                      type="button"
+                      onClick={handleTestAlarm}
+                      className="bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                      title="Testar o alarme sonoro agora para verificar o volume"
+                    >
+                      <Volume2 size={15} className="text-[#0056b3]" />
+                      <span>Testar Som</span>
+                    </button>
+
                     <button 
                       onClick={() => setShowShareModal(true)}
-                      className="bg-blue-50 hover:bg-blue-100 text-[#0056b3] border border-blue-200 px-3.5 py-2 rounded-xl text-sm font-bold flex items-center gap-2 transition-all cursor-pointer shadow-xs"
+                      className="bg-blue-50 hover:bg-blue-100 text-[#0056b3] border border-blue-200 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
                       title="Copiar link ou ver QR Code de abertura de chamados para clientes"
                     >
-                      <QrCode size={16} />
-                      <span>Link / QR Code para Clientes</span>
+                      <QrCode size={15} />
+                      <span>Link / QR Code</span>
                     </button>
                     <button 
                       onClick={handleLogout}
-                      className="text-gray-500 hover:text-red-600 border border-gray-200 hover:border-red-200 px-3 py-2 rounded-xl flex items-center gap-1.5 text-sm font-medium transition-all cursor-pointer"
+                      className="text-gray-500 hover:text-red-600 border border-gray-200 hover:border-red-200 px-3 py-2 rounded-xl flex items-center gap-1.5 text-xs font-medium transition-all cursor-pointer"
                     >
-                      <LogOut size={16} /> Sair
+                      <LogOut size={15} /> Sair
                     </button>
                   </div>
                 </div>
 
-                {/* Banner Informativo de Ativação Online 24h */}
-                <div className="bg-gradient-to-r from-[#003366] via-[#004080] to-[#0056b3] text-white rounded-2xl p-4 sm:p-5 mb-6 shadow-md border border-blue-700/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="space-y-1">
+                {/* Dica para Habilitação do Áudio no Navegador */}
+                {!audioUnlocked && (
+                  <div 
+                    onClick={handleTestAlarm}
+                    className="mb-4 p-3 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl flex items-center justify-between text-amber-900 text-xs font-semibold cursor-pointer transition-all shadow-xs"
+                    title="Clique para autorizar a reprodução sonora no navegador"
+                  >
                     <div className="flex items-center gap-2">
-                      <span className="relative flex h-2.5 w-2.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400"></span>
-                      </span>
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-300">Aplicativo 100% Online na Nuvem</span>
+                      <Volume2 size={16} className="text-amber-600 animate-pulse" />
+                      <span>Para garantir que o alarme toque sem bloqueio do navegador, clique aqui para autorizar o som.</span>
                     </div>
-                    <h3 className="text-base sm:text-lg font-bold">Acesse e atenda chamados direto na internet sem precisar do IA Studio</h3>
-                    <p className="text-xs text-blue-100 max-w-2xl leading-relaxed">
-                      Seu sistema já está hospedado e ativo 24h nos servidores Google Cloud. Você e seus clientes podem abrir e gerenciar chamados pelo celular ou computador sem abrir o IA Studio.
-                    </p>
+                    <span className="underline font-bold text-[#0056b3] shrink-0 ml-2">Autorizar e Testar Som</span>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                    <button
-                      onClick={() => setShowOnlineAccessModal(true)}
-                      className="px-3.5 py-2 bg-white text-[#0056b3] hover:bg-blue-50 text-xs font-bold rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
-                    >
-                      <Globe size={14} /> Links & Instalação
-                    </button>
-                    <button
-                      onClick={handleCopyLink}
-                      className="px-3.5 py-2 bg-blue-800/80 hover:bg-blue-800 text-white border border-blue-700 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
-                    >
-                      {copiedLink ? <Check size={14} /> : <Copy size={14} />} Link Cliente
-                    </button>
+                )}
+
+                {/* Banner de Alarme Ativo com Notificação em Destaque */}
+                {activeAlarmTicket && (
+                  <div className="mb-6 p-4 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white shadow-xl shadow-red-500/20 animate-in fade-in slide-in-from-top-3 border border-red-300">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
+                          <BellRing size={26} className="text-white animate-pulse" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 bg-white text-red-700 text-[10px] font-black uppercase rounded-full tracking-wider shadow-xs">
+                              🚨 Novo Chamado Recebido!
+                            </span>
+                            <span className="text-xs text-red-100 font-mono">
+                              #{activeAlarmTicket.id.slice(0, 6).toUpperCase()}
+                            </span>
+                          </div>
+                          <h3 className="text-base sm:text-lg font-bold mt-1 text-white">
+                            {activeAlarmTicket.clientName} — <span className="font-normal opacity-95">{activeAlarmTicket.equipment}</span>
+                          </h3>
+                          <p className="text-xs text-red-100 line-clamp-1 italic mt-0.5">
+                            "{activeAlarmTicket.problem}"
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => playAlarmSound()}
+                          className="px-3 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                          title="Tocar o alarme sonoro novamente"
+                        >
+                          <Volume2 size={15} /> Tocar Som
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveAlarmTicket(null)}
+                          className="px-4 py-2 bg-white text-red-700 hover:bg-red-50 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+                        >
+                          Silenciar Alarme
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="grid gap-4">
                   {tickets.length === 0 ? (
@@ -1407,242 +1726,6 @@ export default function App() {
                 className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
               >
                 Fechar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Ativar Direto na Internet & Instalar App */}
-      {showOnlineAccessModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150 border border-gray-100 my-8 max-h-[90vh] flex flex-col">
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4 pb-4 border-b border-gray-100">
-              <div>
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold mb-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  100% ONLINE E ATIVO NA NUVEM
-                </div>
-                <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                  <Globe size={22} className="text-[#0056b3]" />
-                  Acessar Direto na Internet (Sem IA Studio)
-                </h3>
-                <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                  O aplicativo <strong>DUNEX-TI</strong> já está hospedado e funcionando 24h na internet. Qualquer pessoa pode acessar pelo celular, tablet ou computador sem precisar do IA Studio.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowOnlineAccessModal(false)}
-                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition-all cursor-pointer text-sm font-bold shrink-0"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Scrollable Content */}
-            <div className="overflow-y-auto py-4 space-y-5 flex-1 pr-1">
-              {/* Card 1: Link do Cliente */}
-              <div className="bg-blue-50/60 border border-blue-200/80 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
-                    <Smartphone size={15} className="text-[#0056b3]" /> Link de Abertura de Chamados (Para Clientes)
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-[#0056b3]">
-                    Sem Senha / Aberto
-                  </span>
-                </div>
-                <p className="text-xs text-blue-950">
-                  Envie este link para seus clientes abrirem chamados pelo WhatsApp, redes sociais ou site:
-                </p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={getClientShareUrl()}
-                    className="flex-1 bg-white border border-blue-200 rounded-xl px-3 py-2 text-xs font-mono text-gray-800 select-all outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCopyLink}
-                    className="px-4 py-2 bg-[#0056b3] hover:bg-[#004494] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shrink-0"
-                  >
-                    {copiedLink ? <Check size={14} /> : <Copy size={14} />} {copiedLink ? 'Copiado!' : 'Copiar'}
-                  </button>
-                  <a
-                    href={getClientShareUrl()}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shrink-0"
-                  >
-                    <ExternalLink size={14} /> Testar
-                  </a>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <a
-                    href={`https://wa.me/?text=${encodeURIComponent(`Olá! Para abrir um chamado de suporte ou manutenção na DUNEX-TI, acesse nosso link direto: ${getClientShareUrl()}`)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs text-green-700 font-bold hover:underline"
-                  >
-                    <MessageCircle size={14} /> Enviar link pelo WhatsApp
-                  </a>
-                  <span className="text-gray-300">•</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowOnlineAccessModal(false);
-                      setShowShareModal(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 text-xs text-[#0056b3] font-bold hover:underline cursor-pointer"
-                  >
-                    <QrCode size={14} /> Gerar QR Code para adesivo
-                  </button>
-                </div>
-              </div>
-
-              {/* Card 2: Link do Técnico */}
-              <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
-                    <Laptop size={15} className="text-gray-700" /> Link do Painel do Técnico (Para Você)
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200">
-                    Acesso Protegido
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600">
-                  Use este link para gerenciar chamados, iniciar manutenções e emitir relatórios em PDF:
-                </p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={getTechShareUrl()}
-                    className="flex-1 bg-white border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono text-gray-800 select-all outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCopyTechLink}
-                    className="px-4 py-2 bg-gray-800 hover:bg-black text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shrink-0"
-                  >
-                    {copiedTechLink ? <Check size={14} /> : <Copy size={14} />} {copiedTechLink ? 'Copiado!' : 'Copiar'}
-                  </button>
-                  <a
-                    href={getTechShareUrl()}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-2 bg-white hover:bg-gray-100 text-gray-700 border border-gray-200 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shrink-0"
-                  >
-                    <ExternalLink size={14} /> Abrir
-                  </a>
-                </div>
-                <p className="text-[11px] text-gray-500 italic">
-                  💡 Dica: Salve este link nos Favoritos do seu celular ou do seu navegador do computador (Ctrl+D).
-                </p>
-              </div>
-
-              {/* Card 3: Instalar como Aplicativo PWA */}
-              <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-emerald-950 uppercase tracking-wider flex items-center gap-1.5">
-                    <Sparkles size={15} className="text-emerald-600" /> Instalar como Aplicativo no Celular / PC (PWA)
-                  </span>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900">
-                    Sem Baixar de Loja
-                  </span>
-                </div>
-                <p className="text-xs text-emerald-900 leading-relaxed">
-                  Você e seus clientes podem instalar o <strong>DUNEX-TI</strong> direto na tela inicial. Ele funciona como um aplicativo normal com ícone, tela cheia e carregamento ultrarrápido:
-                </p>
-
-                {isInstallable && (
-                  <button
-                    type="button"
-                    onClick={handleInstallApp}
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer"
-                  >
-                    <Smartphone size={16} /> Instalar DUNEX-TI Agora neste Dispositivo
-                  </button>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1 text-xs">
-                  <div className="bg-white/90 border border-emerald-200 rounded-xl p-3">
-                    <div className="font-bold text-gray-900 flex items-center gap-1.5 mb-1">
-                      <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-bold">1</span>
-                      Android (Chrome)
-                    </div>
-                    <p className="text-[11px] text-gray-600 leading-normal">
-                      Abra o link, toque nos <strong>3 pontinhos (⋮)</strong> no topo e toque em <strong>"Instalar aplicativo"</strong> ou <strong>"Adicionar à tela inicial"</strong>.
-                    </p>
-                  </div>
-
-                  <div className="bg-white/90 border border-emerald-200 rounded-xl p-3">
-                    <div className="font-bold text-gray-900 flex items-center gap-1.5 mb-1">
-                      <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-bold">2</span>
-                      iPhone / iPad (Safari)
-                    </div>
-                    <p className="text-[11px] text-gray-600 leading-normal">
-                      Abra no Safari, toque no botão <strong>Compartilhar (⎋)</strong> e selecione <strong>"Adicionar à Tela de Início"</strong>.
-                    </p>
-                  </div>
-
-                  <div className="bg-white/90 border border-emerald-200 rounded-xl p-3">
-                    <div className="font-bold text-gray-900 flex items-center gap-1.5 mb-1">
-                      <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[10px] font-bold">3</span>
-                      Computador (PC/Mac)
-                    </div>
-                    <p className="text-[11px] text-gray-600 leading-normal">
-                      No Chrome ou Edge, clique no ícone de <strong>Instalar</strong> ao lado da barra de endereço ou pressione <strong>Ctrl+D</strong> para favoritar.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Card 4: Hospedagem com Domínio Próprio (Vercel / Netlify) */}
-              <div className="border border-gray-200 rounded-2xl p-4 bg-white">
-                <button
-                  type="button"
-                  onClick={() => setShowCustomDomainHelp(!showCustomDomainHelp)}
-                  className="w-full flex items-center justify-between text-left text-xs font-bold text-gray-800 hover:text-[#0056b3] transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-2">
-                    <ShieldCheck size={16} className="text-[#0056b3]" />
-                    Quer usar Domínio Próprio (ex: www.dunexti.com.br) ou Vercel?
-                  </span>
-                  <span className="text-gray-400 font-normal text-base">{showCustomDomainHelp ? '▲' : '▼'}</span>
-                </button>
-
-                {showCustomDomainHelp && (
-                  <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-600 space-y-2 leading-relaxed animate-in fade-in duration-150">
-                    <p>
-                      Se você desejar publicar em um endereço personalizado como <strong>dunexti.com.br</strong> ou <strong>dunex-ti.vercel.app</strong>:
-                    </p>
-                    <ol className="list-decimal list-inside space-y-1 text-gray-700 pl-1 font-medium">
-                      <li>O banco de dados <strong>Firebase Firestore</strong> fica 100% na nuvem do Google e funciona em qualquer hospedagem.</li>
-                      <li>Você pode conectar o repositório gratuitamente na <strong>Vercel</strong> ou <strong>Netlify</strong> com 1 clique.</li>
-                      <li>Na Vercel/Netlify, basta apontar seu domínio (DNS CNAME) para ter HTTPS gratuito e domínio próprio permanente!</li>
-                    </ol>
-                    <p className="text-[11px] text-gray-500 pt-1">
-                      Enquanto isso, o link do Google Cloud Run fornecido acima já funciona perfeitamente sem nenhum custo e sem limites!
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="pt-3 border-t border-gray-100 flex items-center justify-between">
-              <span className="text-[11px] text-gray-400">
-                DUNEX-TI • Cloud Run & Firebase Firestore
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowOnlineAccessModal(false)}
-                className="px-5 py-2 bg-[#0056b3] hover:bg-[#004494] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-sm"
-              >
-                Entendi, Fechar
               </button>
             </div>
           </div>
