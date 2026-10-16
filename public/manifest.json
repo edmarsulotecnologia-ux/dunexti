@@ -1,0 +1,55 @@
+{
+  "id": "/",
+  "name": "DUNEX-TI - Sistema de Chamados de Manutenção",
+  "short_name": "DUNEX-TI",
+  "description": "Sistema de gestão e abertura de chamados técnicos de manutenção DUNEX-TI.",
+  "start_url": "/?modo=cliente",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0056b3",
+  "theme_color": "#0056b3",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Novo Chamado",
+      "short_name": "Abrir",
+      "description": "Abrir um novo chamado técnico",
+      "url": "/?modo=cliente&acao=novo",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Consultar Chamado",
+      "short_name": "Consultar",
+      "description": "Acompanhar chamado pelo WhatsApp",
+      "url": "/?modo=cliente&acao=historico",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Área do Técnico",
+      "short_name": "Técnico",
+      "description": "Painel de controle e atendimento",
+      "url": "/?modo=tecnico",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

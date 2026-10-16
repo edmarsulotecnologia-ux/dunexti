@@ -1,0 +1,33 @@
+{
+  "entities": {
+    "Ticket": {
+      "title": "Ticket",
+      "description": "A maintenance request from a client.",
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string", "description": "Name of the client" },
+        "whatsapp": { "type": "string", "description": "WhatsApp number" },
+        "equipment": { "type": "string", "description": "Equipment name or number" },
+        "problem": { "type": "string", "description": "Description of the problem" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Time the ticket was created" },
+        "status": { 
+          "type": "string", 
+          "enum": ["pending", "in-progress", "completed", "needs-next-step", "completed-no-test"],
+          "description": "Current status of the ticket"
+        },
+        "technicianId": { "type": "string", "description": "UID of the technician handling the ticket" },
+        "startTime": { "type": "string", "format": "date-time", "description": "Time maintenance started" },
+        "endTime": { "type": "string", "format": "date-time", "description": "Time maintenance ended" },
+        "solution": { "type": "string", "description": "Solution provided by the technician" },
+        "recommendation": { "type": "string", "description": "Technician's recommendations" }
+      },
+      "required": ["clientName", "whatsapp", "equipment", "problem", "createdAt", "status"]
+    }
+  },
+  "firestore": {
+    "/tickets/{ticketId}": {
+      "schema": "Ticket",
+      "description": "Collection of maintenance tickets"
+    }
+  }
+}

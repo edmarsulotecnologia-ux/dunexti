@@ -1,0 +1,65 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: tickets
+    // Document ID: auto-generated
+    // Fields:
+    //   - clientName: string (required)
+    //   - whatsapp: string (required)
+    //   - equipment: string (required)
+    //   - problem: string (required)
+    //   - createdAt: timestamp (required)
+    //   - status: string (required) - pending, in-progress, completed, needs-next-step, completed-no-test
+    //   - technicianId: string (optional)
+    //   - startTime: timestamp (optional)
+    //   - endTime: timestamp (optional)
+    //   - solution: string (optional)
+    //   - recommendation: string (optional)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        (request.auth.token.email == "edmarsulotecnologia@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isValidTicket(data) {
+      return data.keys().hasAll(['clientName', 'whatsapp', 'equipment', 'problem', 'createdAt', 'status']) &&
+             data.clientName is string && data.clientName.size() > 0 && data.clientName.size() < 100 &&
+             data.whatsapp is string && data.whatsapp.size() > 0 && data.whatsapp.size() < 20 &&
+             data.equipment is string && data.equipment.size() > 0 && data.equipment.size() < 100 &&
+             data.problem is string && data.problem.size() > 0 && data.problem.size() < 1000 &&
+             data.status in ['pending', 'in-progress', 'completed', 'needs-next-step', 'completed-no-test'];
+    }
+
+    match /tickets/{ticketId} {
+      // Allow clients and technicians to create tickets
+      allow create: if true;
+      
+      // Allow clients and technicians to read tickets
+      allow read: if true;
+      
+      // Allow technicians to update status, timestamps, and maintenance notes
+      allow update: if true;
+      
+      // Allow deleting tickets
+      allow delete: if true;
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+    }
+  }
+}
