@@ -55,7 +55,8 @@ import {
   Share2,
   BellRing,
   Volume2,
-  VolumeX
+  VolumeX,
+  Building2
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { cn } from './lib/utils';
@@ -65,6 +66,7 @@ import { generateTicketPDF, safeFormatDate } from './lib/pdfGenerator';
 interface Ticket {
   id: string;
   clientName: string;
+  companyName?: string;
   whatsapp: string;
   equipment: string;
   problem: string;
@@ -166,6 +168,7 @@ export default function App() {
 
   // Client Form State
   const [clientName, setClientName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
   const [equipment, setEquipment] = useState('');
   const [problem, setProblem] = useState('');
@@ -174,6 +177,7 @@ export default function App() {
   const [submittedTicketInfo, setSubmittedTicketInfo] = useState<{
     protocol: string;
     clientName: string;
+    companyName?: string;
     equipment: string;
     whatsapp: string;
     problem: string;
@@ -184,16 +188,19 @@ export default function App() {
   const getWhatsAppTicketMessage = (info: {
     protocol: string;
     clientName: string;
+    companyName?: string;
     equipment: string;
     whatsapp: string;
     problem: string;
   }) => {
     const link = getClientShareUrl();
     const cleanPhone = info.whatsapp.replace(/\D/g, '');
+    const companyText = info.companyName ? `🏢 *Empresa:* ${info.companyName}\n` : '';
     return (
       `🛠️ *NOVO CHAMADO DE MANUTENÇÃO - DUNEX-TI*\n\n` +
       `📋 *Protocolo:* #${info.protocol}\n` +
       `👤 *Cliente:* ${info.clientName}\n` +
+      companyText +
       `📱 *WhatsApp:* ${info.whatsapp}\n` +
       `💻 *Equipamento:* ${info.equipment}\n` +
       `⚠️ *Problema:* ${info.problem}\n\n` +
@@ -204,6 +211,7 @@ export default function App() {
   const handleSendToWhatsApp = (info: {
     protocol: string;
     clientName: string;
+    companyName?: string;
     equipment: string;
     whatsapp: string;
     problem: string;
@@ -711,6 +719,7 @@ export default function App() {
       : sendWhatsAppOnSubmit;
 
     const currentClientName = clientName.trim();
+    const currentCompanyName = companyName.trim();
     const currentWhatsapp = whatsapp.trim();
     const currentEquipment = equipment.trim();
     const currentProblem = problem.trim();
@@ -718,6 +727,7 @@ export default function App() {
     try {
       const docRef = await addDoc(collection(db, 'tickets'), {
         clientName: currentClientName,
+        companyName: currentCompanyName,
         whatsapp: currentWhatsapp,
         equipment: currentEquipment,
         problem: currentProblem,
@@ -732,6 +742,7 @@ export default function App() {
           id: docRef.id,
           shortId,
           clientName: currentClientName,
+          companyName: currentCompanyName,
           equipment: currentEquipment,
           problem: currentProblem,
           status: 'pending',
@@ -753,6 +764,7 @@ export default function App() {
       const ticketInfo = {
         protocol: shortId,
         clientName: currentClientName,
+        companyName: currentCompanyName,
         equipment: currentEquipment,
         whatsapp: currentWhatsapp,
         problem: currentProblem
@@ -761,6 +773,7 @@ export default function App() {
       setSubmittedTicketInfo(ticketInfo);
       setSuccessMessage(`Chamado #${shortId} registrado com sucesso!`);
       setClientName('');
+      setCompanyName('');
       setWhatsapp('');
       setEquipment('');
       setProblem('');
@@ -981,6 +994,12 @@ export default function App() {
                   </p>
 
                   <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 mb-4 text-left space-y-2 text-sm">
+                    {submittedTicketInfo.companyName && (
+                      <div className="flex justify-between items-center text-gray-600">
+                        <span>Empresa:</span>
+                        <span className="font-semibold text-gray-900">{submittedTicketInfo.companyName}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between items-center text-gray-600">
                       <span>Equipamento:</span>
                       <span className="font-semibold text-gray-900">{submittedTicketInfo.equipment}</span>
@@ -1058,6 +1077,23 @@ export default function App() {
                           value={clientName}
                           onChange={(e) => setClientName(e.target.value)}
                           placeholder="Seu nome completo"
+                          className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Novo Campo: Nome da Empresa */}
+                    <div>
+                      <label className="block text-sm font-semibold mb-1.5 text-gray-700">
+                        Nome da Empresa <span className="text-gray-400 font-normal text-xs">(opcional)</span>
+                      </label>
+                      <div className="relative">
+                        <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                        <input 
+                          type="text" 
+                          value={companyName}
+                          onChange={(e) => setCompanyName(e.target.value)}
+                          placeholder="Nome da sua empresa ou razão social"
                           className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all"
                         />
                       </div>
@@ -1197,6 +1233,12 @@ export default function App() {
                       </div>
                       
                       <div className="space-y-3">
+                        {ticket.companyName && (
+                          <div className="flex items-center gap-1.5 text-xs text-gray-600 font-medium">
+                            <Building2 size={13} className="text-[#0056b3]" />
+                            <span>Empresa: <strong>{ticket.companyName}</strong></span>
+                          </div>
+                        )}
                         <div>
                           <span className="text-xs font-bold uppercase text-gray-400">Problema Relatado</span>
                           <p className="text-sm text-gray-600">{ticket.problem}</p>
@@ -1394,7 +1436,11 @@ export default function App() {
                             </span>
                           </div>
                           <h3 className="text-base sm:text-lg font-bold mt-1 text-white">
-                            {activeAlarmTicket.clientName} — <span className="font-normal opacity-95">{activeAlarmTicket.equipment}</span>
+                            {activeAlarmTicket.clientName}
+                            {activeAlarmTicket.companyName && (
+                              <span className="text-sm font-semibold opacity-90 ml-1.5">({activeAlarmTicket.companyName})</span>
+                            )}
+                            {" "}— <span className="font-normal opacity-95">{activeAlarmTicket.equipment}</span>
                           </h3>
                           <p className="text-xs text-red-100 line-clamp-1 italic mt-0.5">
                             "{activeAlarmTicket.problem}"
@@ -1433,8 +1479,14 @@ export default function App() {
                       <div key={ticket.id} className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm hover:shadow-md transition-all">
                         <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
                           <div>
-                            <div className="flex items-center gap-3 mb-1">
+                            <div className="flex flex-wrap items-center gap-2 mb-1">
                               <h3 className="font-bold text-lg">{ticket.clientName}</h3>
+                              {ticket.companyName && (
+                                <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1 border border-slate-200">
+                                  <Building2 size={12} className="text-slate-500" />
+                                  {ticket.companyName}
+                                </span>
+                              )}
                               {getStatusBadge(ticket.status)}
                             </div>
                             <p className="text-sm text-gray-500 flex items-center gap-1">
