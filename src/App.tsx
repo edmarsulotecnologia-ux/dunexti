@@ -176,7 +176,42 @@ export default function App() {
     clientName: string;
     equipment: string;
     whatsapp: string;
+    problem: string;
   } | null>(null);
+  const [sendWhatsAppOnSubmit, setSendWhatsAppOnSubmit] = useState(true);
+
+  // Gera a mensagem formatada para envio do chamado no WhatsApp
+  const getWhatsAppTicketMessage = (info: {
+    protocol: string;
+    clientName: string;
+    equipment: string;
+    whatsapp: string;
+    problem: string;
+  }) => {
+    const link = getClientShareUrl();
+    const cleanPhone = info.whatsapp.replace(/\D/g, '');
+    return (
+      `🛠️ *NOVO CHAMADO DE MANUTENÇÃO - DUNEX-TI*\n\n` +
+      `📋 *Protocolo:* #${info.protocol}\n` +
+      `👤 *Cliente:* ${info.clientName}\n` +
+      `📱 *WhatsApp:* ${info.whatsapp}\n` +
+      `💻 *Equipamento:* ${info.equipment}\n` +
+      `⚠️ *Problema:* ${info.problem}\n\n` +
+      `📍 *Acompanhe o status online:* ${link}&acao=historico&tel=${encodeURIComponent(cleanPhone)}`
+    );
+  };
+
+  const handleSendToWhatsApp = (info: {
+    protocol: string;
+    clientName: string;
+    equipment: string;
+    whatsapp: string;
+    problem: string;
+  }) => {
+    const message = getWhatsAppTicketMessage(info);
+    const url = `https://wa.me/?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
 
   // Client Sharing & QR Code State
   const [showShareModal, setShowShareModal] = useState(false);
@@ -668,15 +703,24 @@ export default function App() {
     }
   };
 
-  const handleSubmitTicket = async (e: React.FormEvent) => {
+  const handleSubmitTicket = async (e: React.FormEvent, options?: { sendToWhatsApp?: boolean }) => {
     e.preventDefault();
     setSubmitting(true);
+    const shouldSendToWhatsApp = options?.sendToWhatsApp !== undefined 
+      ? options.sendToWhatsApp 
+      : sendWhatsAppOnSubmit;
+
+    const currentClientName = clientName.trim();
+    const currentWhatsapp = whatsapp.trim();
+    const currentEquipment = equipment.trim();
+    const currentProblem = problem.trim();
+
     try {
       const docRef = await addDoc(collection(db, 'tickets'), {
-        clientName,
-        whatsapp,
-        equipment,
-        problem,
+        clientName: currentClientName,
+        whatsapp: currentWhatsapp,
+        equipment: currentEquipment,
+        problem: currentProblem,
         createdAt: serverTimestamp(),
         status: 'pending'
       });
@@ -687,11 +731,11 @@ export default function App() {
         const ticketAlertPayload = {
           id: docRef.id,
           shortId,
-          clientName,
-          equipment,
-          problem,
+          clientName: currentClientName,
+          equipment: currentEquipment,
+          problem: currentProblem,
           status: 'pending',
-          whatsapp,
+          whatsapp: currentWhatsapp,
           timestamp: Date.now()
         };
         if (typeof window !== 'undefined') {
@@ -706,18 +750,26 @@ export default function App() {
         console.warn('Realtime broadcast error:', broadcastErr);
       }
 
-      setSubmittedTicketInfo({
+      const ticketInfo = {
         protocol: shortId,
-        clientName,
-        equipment,
-        whatsapp
-      });
+        clientName: currentClientName,
+        equipment: currentEquipment,
+        whatsapp: currentWhatsapp,
+        problem: currentProblem
+      };
+
+      setSubmittedTicketInfo(ticketInfo);
       setSuccessMessage(`Chamado #${shortId} registrado com sucesso!`);
       setClientName('');
       setWhatsapp('');
       setEquipment('');
       setProblem('');
       toast.success(`Chamado #${shortId} enviado com sucesso!`);
+
+      // Se a opção de abrir o WhatsApp estiver ativada
+      if (shouldSendToWhatsApp) {
+        handleSendToWhatsApp(ticketInfo);
+      }
     } catch (error) {
       console.error("Error adding ticket:", error);
       toast.error('Erro ao enviar chamado. Tente novamente.');
@@ -928,7 +980,7 @@ export default function App() {
                     Olá, <strong>{submittedTicketInfo.clientName}</strong>! Sua solicitação para o equipamento <strong>{submittedTicketInfo.equipment}</strong> já está registrada no sistema da <strong>DUNEX-TI</strong>.
                   </p>
 
-                  <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 mb-6 text-left space-y-2 text-sm">
+                  <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 mb-4 text-left space-y-2 text-sm">
                     <div className="flex justify-between items-center text-gray-600">
                       <span>Equipamento:</span>
                       <span className="font-semibold text-gray-900">{submittedTicketInfo.equipment}</span>
@@ -938,12 +990,26 @@ export default function App() {
                       <span className="font-semibold text-gray-900">{submittedTicketInfo.whatsapp}</span>
                     </div>
                     <div className="flex justify-between items-center text-gray-600">
+                      <span>Problema:</span>
+                      <span className="font-semibold text-gray-900 line-clamp-1">{submittedTicketInfo.problem}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-gray-600 pt-1 border-t border-gray-200/60">
                       <span>Status inicial:</span>
                       <span className="font-semibold text-amber-600 flex items-center gap-1">
                         <Clock size={13} /> Pendente de atendimento
                       </span>
                     </div>
                   </div>
+
+                  {/* Botão de Enviar no WhatsApp com destaque */}
+                  <button
+                    type="button"
+                    onClick={() => handleSendToWhatsApp(submittedTicketInfo)}
+                    className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white font-bold py-3.5 px-4 rounded-xl shadow-lg shadow-[#25D366]/25 transition-all flex items-center justify-center gap-2 cursor-pointer text-sm mb-3"
+                  >
+                    <MessageCircle size={19} />
+                    Enviar Chamado Aberto para o WhatsApp
+                  </button>
 
                   <div className="flex flex-col sm:flex-row gap-3">
                     <button
@@ -1043,18 +1109,44 @@ export default function App() {
                       </div>
                     </div>
 
-                    <button 
-                      disabled={submitting}
-                      type="submit"
-                      className="w-full bg-[#0056b3] hover:bg-[#004494] text-white font-bold py-3 rounded-xl shadow-lg shadow-[#0056b3]/20 transition-all flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer"
-                    >
-                      {submitting ? "Enviando..." : (
-                        <>
-                          Enviar Chamado
-                          <Send size={18} />
-                        </>
-                      )}
-                    </button>
+                    {/* Opção de Enviar Chamado para o WhatsApp */}
+                    <label className="flex items-center gap-2.5 p-3 rounded-xl bg-green-50/70 border border-green-200/80 cursor-pointer hover:bg-green-50 transition-colors select-none">
+                      <input 
+                        type="checkbox"
+                        checked={sendWhatsAppOnSubmit}
+                        onChange={(e) => setSendWhatsAppOnSubmit(e.target.checked)}
+                        className="w-4 h-4 text-green-600 rounded focus:ring-green-500 accent-green-600 cursor-pointer"
+                      />
+                      <div className="flex items-center gap-2 text-xs font-semibold text-green-900">
+                        <MessageCircle size={16} className="text-green-600 shrink-0" />
+                        <span>Abrir WhatsApp com o chamado preenchido após enviar</span>
+                      </div>
+                    </label>
+
+                    <div className="space-y-2.5 pt-1">
+                      <button 
+                        disabled={submitting}
+                        type="submit"
+                        className="w-full bg-[#25D366] hover:bg-[#1EBE5D] text-white font-bold py-3.5 rounded-xl shadow-lg shadow-[#25D366]/20 transition-all flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer text-base"
+                      >
+                        {submitting ? "Enviando Chamado..." : (
+                          <>
+                            <MessageCircle size={20} />
+                            Enviar Chamado e Abrir no WhatsApp
+                          </>
+                        )}
+                      </button>
+
+                      <button 
+                        disabled={submitting}
+                        type="button"
+                        onClick={(e) => handleSubmitTicket(e, { sendToWhatsApp: false })}
+                        className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-70 cursor-pointer text-xs"
+                      >
+                        <Send size={14} />
+                        Enviar Apenas pelo Sistema (Sem WhatsApp)
+                      </button>
+                    </div>
                   </form>
                 </div>
               )
