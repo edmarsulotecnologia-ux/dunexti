@@ -56,7 +56,10 @@ import {
   BellRing,
   Volume2,
   VolumeX,
-  Building2
+  Building2,
+  Search,
+  X,
+  Filter
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { cn } from './lib/utils';
@@ -232,7 +235,8 @@ export default function App() {
   const [searchingHistory, setSearchingHistory] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
 
-  // Technician Edit State
+  // Technician Edit & Search State
+  const [techCompanyFilter, setTechCompanyFilter] = useState('');
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
   const [startingTicket, setStartingTicket] = useState<Ticket | null>(null);
   const [ticketToDelete, setTicketToDelete] = useState<Ticket | null>(null);
@@ -242,6 +246,23 @@ export default function App() {
   const [solution, setSolution] = useState('');
   const [recommendation, setRecommendation] = useState('');
   const [status, setStatus] = useState<Ticket['status']>('completed');
+
+  // Unique company names from tickets that have a company name defined
+  const uniqueCompanies = React.useMemo(() => {
+    const set = new Set<string>();
+    tickets.forEach(t => {
+      const name = (t.companyName || '').trim();
+      if (name) set.add(name);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [tickets]);
+
+  // Filtered tickets based on company name
+  const filteredTickets = React.useMemo(() => {
+    const filter = techCompanyFilter.trim().toLowerCase();
+    if (!filter) return tickets;
+    return tickets.filter(t => (t.companyName || '').toLowerCase().includes(filter));
+  }, [tickets, techCompanyFilter]);
 
   // Notification & Alarm Sound State
   const initialTicketsLoaded = React.useRef(false);
@@ -670,6 +691,7 @@ export default function App() {
   const handleLogout = () => {
     signOut(auth);
     setIsTechLoggedIn(false);
+    setTechCompanyFilter('');
     try {
       localStorage.removeItem('dutec_tech_auth');
     } catch {}
@@ -1468,24 +1490,142 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Campo de Busca e Filtro por Empresa */}
+                <div className="bg-white rounded-2xl border border-gray-200 p-4 sm:p-5 shadow-xs mb-6">
+                  <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                      <input
+                        type="text"
+                        value={techCompanyFilter}
+                        onChange={(e) => setTechCompanyFilter(e.target.value)}
+                        placeholder="Buscar por nome da empresa (ex: Padaria, Mercado, ACME...)"
+                        className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none text-sm transition-all"
+                      />
+                      {techCompanyFilter && (
+                        <button
+                          type="button"
+                          onClick={() => setTechCompanyFilter('')}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1 cursor-pointer transition-colors"
+                          title="Limpar busca"
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs text-gray-500 shrink-0 self-end sm:self-center font-medium">
+                      <Filter size={14} className="text-[#0056b3]" />
+                      <span>
+                        {techCompanyFilter ? (
+                          <>
+                            Exibindo <strong className="text-gray-900 font-bold">{filteredTickets.length}</strong> de {tickets.length} chamados
+                          </>
+                        ) : (
+                          <>
+                            Total: <strong className="text-gray-900 font-bold">{tickets.length}</strong> chamados
+                          </>
+                        )}
+                      </span>
+                      {techCompanyFilter && (
+                        <button
+                          type="button"
+                          onClick={() => setTechCompanyFilter('')}
+                          className="ml-1 text-xs text-[#0056b3] hover:underline font-bold cursor-pointer"
+                        >
+                          (Limpar)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Atalhos rápidos para as empresas cadastradas */}
+                  {uniqueCompanies.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap mt-3.5 pt-3.5 border-t border-gray-100">
+                      <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mr-1 flex items-center gap-1">
+                        Empresas:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setTechCompanyFilter('')}
+                        className={cn(
+                          "px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer border",
+                          !techCompanyFilter 
+                            ? "bg-[#0056b3] text-white border-[#0056b3] shadow-xs" 
+                            : "bg-gray-50 hover:bg-gray-100 text-gray-600 border-gray-200"
+                        )}
+                      >
+                        Todas ({tickets.length})
+                      </button>
+                      {uniqueCompanies.map((comp) => {
+                        const count = tickets.filter(t => (t.companyName || '').trim().toLowerCase() === comp.toLowerCase()).length;
+                        const isSelected = techCompanyFilter.trim().toLowerCase() === comp.toLowerCase();
+                        return (
+                          <button
+                            key={comp}
+                            type="button"
+                            onClick={() => setTechCompanyFilter(isSelected ? '' : comp)}
+                            className={cn(
+                              "px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer border flex items-center gap-1.5",
+                              isSelected 
+                                ? "bg-[#0056b3] text-white border-[#0056b3] shadow-xs font-bold" 
+                                : "bg-slate-50 hover:bg-blue-50/50 text-slate-700 hover:text-[#0056b3] border-slate-200"
+                            )}
+                            title={`Filtrar chamados da empresa ${comp}`}
+                          >
+                            <Building2 size={12} className={isSelected ? "text-white" : "text-slate-500"} />
+                            <span>{comp}</span>
+                            <span className={cn(
+                              "text-[10px] px-1.5 py-0.2 rounded-full font-bold",
+                              isSelected ? "bg-white/20 text-white" : "bg-gray-200 text-gray-700"
+                            )}>
+                              {count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 <div className="grid gap-4">
                   {tickets.length === 0 ? (
                     <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-gray-300">
                       <ClipboardList size={48} className="text-gray-300 mx-auto mb-4" />
                       <p className="text-gray-500">Nenhum chamado encontrado.</p>
                     </div>
+                  ) : filteredTickets.length === 0 ? (
+                    <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-gray-300 p-6">
+                      <Building2 size={42} className="text-gray-300 mx-auto mb-3" />
+                      <h4 className="font-bold text-gray-800 text-base mb-1">Nenhum chamado encontrado</h4>
+                      <p className="text-gray-500 text-sm max-w-sm mx-auto mb-4">
+                        Não localizamos chamados cadastrados para a empresa <strong className="text-gray-900 font-semibold">"{techCompanyFilter}"</strong>.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setTechCompanyFilter('')}
+                        className="px-4 py-2 bg-[#0056b3] text-white rounded-xl text-xs font-bold hover:bg-[#004494] transition-all cursor-pointer shadow-xs inline-flex items-center gap-1.5"
+                      >
+                        <X size={14} /> Limpar Filtro de Busca
+                      </button>
+                    </div>
                   ) : (
-                    tickets.map(ticket => (
+                    filteredTickets.map(ticket => (
                       <div key={ticket.id} className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm hover:shadow-md transition-all">
                         <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
                           <div>
                             <div className="flex flex-wrap items-center gap-2 mb-1">
                               <h3 className="font-bold text-lg">{ticket.clientName}</h3>
                               {ticket.companyName && (
-                                <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1 border border-slate-200">
+                                <button
+                                  type="button"
+                                  onClick={() => setTechCompanyFilter(ticket.companyName || '')}
+                                  className="text-xs bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0056b3] px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1 border border-slate-200 hover:border-blue-200 transition-all cursor-pointer"
+                                  title={`Filtrar por ${ticket.companyName}`}
+                                >
                                   <Building2 size={12} className="text-slate-500" />
                                   {ticket.companyName}
-                                </span>
+                                </button>
                               )}
                               {getStatusBadge(ticket.status)}
                             </div>
