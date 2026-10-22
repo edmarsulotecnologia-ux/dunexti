@@ -59,7 +59,9 @@ import {
   Building2,
   Search,
   X,
-  Filter
+  Filter,
+  Pencil,
+  Save
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { cn } from './lib/utils';
@@ -246,6 +248,18 @@ export default function App() {
   const [solution, setSolution] = useState('');
   const [recommendation, setRecommendation] = useState('');
   const [status, setStatus] = useState<Ticket['status']>('completed');
+
+  // Full Ticket Editing State (Technician)
+  const [ticketToEdit, setTicketToEdit] = useState<Ticket | null>(null);
+  const [editClientName, setEditClientName] = useState('');
+  const [editCompanyName, setEditCompanyName] = useState('');
+  const [editWhatsapp, setEditWhatsapp] = useState('');
+  const [editEquipment, setEditEquipment] = useState('');
+  const [editProblem, setEditProblem] = useState('');
+  const [editStatus, setEditStatus] = useState<Ticket['status']>('pending');
+  const [editSolution, setEditSolution] = useState('');
+  const [editRecommendation, setEditRecommendation] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Unique company names from tickets that have a company name defined
   const uniqueCompanies = React.useMemo(() => {
@@ -853,6 +867,79 @@ export default function App() {
       toast.error('Erro ao excluir chamado: ' + (error?.message || 'Tente novamente'));
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleOpenEditTicket = (ticket: Ticket) => {
+    setTicketToEdit(ticket);
+    setEditClientName(ticket.clientName || '');
+    setEditCompanyName(ticket.companyName || '');
+    setEditWhatsapp(ticket.whatsapp || '');
+    setEditEquipment(ticket.equipment || '');
+    setEditProblem(ticket.problem || '');
+    setEditStatus(ticket.status || 'pending');
+    setEditSolution(ticket.solution || '');
+    setEditRecommendation(ticket.recommendation || '');
+  };
+
+  const handleSaveTicketEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ticketToEdit) return;
+
+    if (!editClientName.trim()) {
+      toast.error('O nome do cliente não pode ficar em branco.');
+      return;
+    }
+    if (!editWhatsapp.trim()) {
+      toast.error('O WhatsApp do cliente não pode ficar em branco.');
+      return;
+    }
+    if (!editEquipment.trim()) {
+      toast.error('O equipamento não pode ficar em branco.');
+      return;
+    }
+    if (!editProblem.trim()) {
+      toast.error('O problema relatado não pode ficar em branco.');
+      return;
+    }
+
+    try {
+      setIsSavingEdit(true);
+      const updateData: any = {
+        clientName: editClientName.trim(),
+        companyName: editCompanyName.trim(),
+        whatsapp: editWhatsapp.trim(),
+        equipment: editEquipment.trim(),
+        problem: editProblem.trim(),
+        status: editStatus,
+        solution: editSolution.trim(),
+        recommendation: editRecommendation.trim()
+      };
+
+      // Se o status for alterado para concluído e ainda não tiver endTime, define término
+      if (
+        (editStatus === 'completed' || editStatus === 'completed-no-test') &&
+        !ticketToEdit.endTime
+      ) {
+        updateData.endTime = serverTimestamp();
+      }
+
+      // Se o status for alterado para em andamento e ainda não tiver startTime, define início
+      if (editStatus === 'in-progress' && !ticketToEdit.startTime) {
+        updateData.startTime = serverTimestamp();
+        if (!ticketToEdit.technicianId) {
+          updateData.technicianId = user?.uid || auth.currentUser?.uid || 'tech-mardu2020';
+        }
+      }
+
+      await updateDoc(doc(db, 'tickets', ticketToEdit.id), updateData);
+      toast.success('Chamado atualizado com sucesso!');
+      setTicketToEdit(null);
+    } catch (err: any) {
+      console.error('Erro ao atualizar chamado:', err);
+      toast.error('Erro ao salvar alterações do chamado.');
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -1670,6 +1757,14 @@ export default function App() {
                               </button>
                             )}
                             <button
+                              type="button"
+                              onClick={() => handleOpenEditTicket(ticket)}
+                              className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 hover:border-amber-300 px-3 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                              title="Editar e alterar dados do chamado"
+                            >
+                              <Pencil size={15} className="text-amber-700" /> Editar
+                            </button>
+                            <button
                               onClick={() => setTicketToDelete(ticket)}
                               className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 hover:border-red-300 px-3 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
                               title="Excluir este chamado"
@@ -1894,6 +1989,267 @@ export default function App() {
                 >
                   <FileDown size={18} />
                   Salvar e Exportar PDF
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Editar Chamado Completo (Área do Técnico) */}
+      {ticketToEdit && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-8 overflow-hidden animate-in zoom-in-95 duration-200 border border-gray-100 flex flex-col max-h-[92vh]">
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-amber-500/10 via-white to-transparent shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shadow-xs">
+                  <Pencil size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+                    Editar Chamado
+                    <span className="text-xs font-mono font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md">
+                      #{ticketToEdit.id.slice(0, 8).toUpperCase()}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-gray-500">Altere qualquer informação do chamado técnico</p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setTicketToEdit(null)} 
+                className="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                title="Fechar"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveTicketEdit} className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1">
+              {/* Row 1: Cliente e Empresa */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                    <UserIcon size={14} className="text-[#0056b3]" /> Nome do Cliente *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editClientName}
+                    onChange={(e) => setEditClientName(e.target.value)}
+                    placeholder="Nome completo do cliente"
+                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                    <Building2 size={14} className="text-[#0056b3]" /> Nome da Empresa (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={editCompanyName}
+                    onChange={(e) => setEditCompanyName(e.target.value)}
+                    placeholder="Ex: Padaria Estrela, Clínica Sorriso"
+                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Row 2: WhatsApp e Equipamento */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                    <Smartphone size={14} className="text-[#0056b3]" /> WhatsApp *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editWhatsapp}
+                    onChange={(e) => setEditWhatsapp(e.target.value)}
+                    placeholder="(XX) XXXXX-XXXX"
+                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                    <HardDrive size={14} className="text-[#0056b3]" /> Equipamento *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editEquipment}
+                    onChange={(e) => setEditEquipment(e.target.value)}
+                    placeholder="Ex: Notebook Dell Inspiron, PC Gamer"
+                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Status do Chamado */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                  <Clock size={14} className="text-[#0056b3]" /> Status do Chamado *
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <label className={cn(
+                    "flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all",
+                    editStatus === 'pending'
+                      ? "bg-yellow-50 border-yellow-300 text-yellow-900 shadow-xs"
+                      : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                  )}>
+                    <input
+                      type="radio"
+                      name="editStatus"
+                      value="pending"
+                      checked={editStatus === 'pending'}
+                      onChange={() => setEditStatus('pending')}
+                      className="text-yellow-600"
+                    />
+                    <span>Pendente</span>
+                  </label>
+
+                  <label className={cn(
+                    "flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all",
+                    editStatus === 'in-progress'
+                      ? "bg-blue-50 border-blue-300 text-blue-900 shadow-xs"
+                      : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                  )}>
+                    <input
+                      type="radio"
+                      name="editStatus"
+                      value="in-progress"
+                      checked={editStatus === 'in-progress'}
+                      onChange={() => setEditStatus('in-progress')}
+                      className="text-blue-600"
+                    />
+                    <span>Em Manutenção</span>
+                  </label>
+
+                  <label className={cn(
+                    "flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all",
+                    editStatus === 'completed'
+                      ? "bg-green-50 border-green-300 text-green-900 shadow-xs"
+                      : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                  )}>
+                    <input
+                      type="radio"
+                      name="editStatus"
+                      value="completed"
+                      checked={editStatus === 'completed'}
+                      onChange={() => setEditStatus('completed')}
+                      className="text-green-600"
+                    />
+                    <span>Concluída</span>
+                  </label>
+
+                  <label className={cn(
+                    "flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all",
+                    editStatus === 'needs-next-step'
+                      ? "bg-orange-50 border-orange-300 text-orange-900 shadow-xs"
+                      : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                  )}>
+                    <input
+                      type="radio"
+                      name="editStatus"
+                      value="needs-next-step"
+                      checked={editStatus === 'needs-next-step'}
+                      onChange={() => setEditStatus('needs-next-step')}
+                      className="text-orange-600"
+                    />
+                    <span>Nova Etapa</span>
+                  </label>
+
+                  <label className={cn(
+                    "flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all sm:col-span-2",
+                    editStatus === 'completed-no-test'
+                      ? "bg-purple-50 border-purple-300 text-purple-900 shadow-xs"
+                      : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                  )}>
+                    <input
+                      type="radio"
+                      name="editStatus"
+                      value="completed-no-test"
+                      checked={editStatus === 'completed-no-test'}
+                      onChange={() => setEditStatus('completed-no-test')}
+                      className="text-purple-600"
+                    />
+                    <span>Concluída (Sem Necessidade de Teste)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Descrição do Problema */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                  <MessageSquare size={14} className="text-[#0056b3]" /> Problema Relatado *
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={editProblem}
+                  onChange={(e) => setEditProblem(e.target.value)}
+                  placeholder="Descrição do problema informado pelo cliente..."
+                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all resize-none"
+                />
+              </div>
+
+              {/* Solução Aplicada */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                  <CheckCircle2 size={14} className="text-green-600" /> Solução Técnica Aplicada
+                </label>
+                <textarea
+                  rows={3}
+                  value={editSolution}
+                  onChange={(e) => setEditSolution(e.target.value)}
+                  placeholder="Descreva o procedimento técnico realizado para solucionar..."
+                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all resize-none"
+                />
+              </div>
+
+              {/* Recomendação ao Cliente */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                  <AlertCircle size={14} className="text-amber-600" /> Recomendações Técnicas
+                </label>
+                <textarea
+                  rows={2}
+                  value={editRecommendation}
+                  onChange={(e) => setEditRecommendation(e.target.value)}
+                  placeholder="Dicas de uso, cuidados preventivos ou recomendações..."
+                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all resize-none"
+                />
+              </div>
+
+              {/* Modal Footer Buttons */}
+              <div className="pt-3 border-t border-gray-100 flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setTicketToEdit(null)}
+                  disabled={isSavingEdit}
+                  className="w-full sm:w-auto px-4 py-2.5 text-sm font-semibold text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="w-full sm:w-auto px-6 py-2.5 bg-[#0056b3] hover:bg-[#004494] text-white rounded-xl text-sm font-bold transition-all shadow-md shadow-[#0056b3]/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingEdit ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Salvando Alterações...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={16} /> Salvar Alterações
+                    </>
+                  )}
                 </button>
               </div>
             </form>
