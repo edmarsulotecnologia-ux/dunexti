@@ -61,7 +61,9 @@ import {
   X,
   Filter,
   Pencil,
-  Save
+  Save,
+  Flame,
+  Flag
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { cn } from './lib/utils';
@@ -72,6 +74,7 @@ interface Ticket {
   id: string;
   clientName: string;
   companyName?: string;
+  priority?: 'baixa' | 'media' | 'alta' | 'urgente';
   whatsapp: string;
   equipment: string;
   problem: string;
@@ -174,6 +177,7 @@ export default function App() {
   // Client Form State
   const [clientName, setClientName] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [priority, setPriority] = useState<'baixa' | 'media' | 'alta' | 'urgente'>('media');
   const [whatsapp, setWhatsapp] = useState('');
   const [equipment, setEquipment] = useState('');
   const [problem, setProblem] = useState('');
@@ -183,6 +187,7 @@ export default function App() {
     protocol: string;
     clientName: string;
     companyName?: string;
+    priority?: 'baixa' | 'media' | 'alta' | 'urgente';
     equipment: string;
     whatsapp: string;
     problem: string;
@@ -194,6 +199,7 @@ export default function App() {
     protocol: string;
     clientName: string;
     companyName?: string;
+    priority?: 'baixa' | 'media' | 'alta' | 'urgente';
     equipment: string;
     whatsapp: string;
     problem: string;
@@ -201,11 +207,15 @@ export default function App() {
     const link = getClientShareUrl();
     const cleanPhone = info.whatsapp.replace(/\D/g, '');
     const companyText = info.companyName ? `🏢 *Empresa:* ${info.companyName}\n` : '';
+    const priorityLabel = info.priority === 'urgente' ? '🚨 *URGENTE*' :
+                          info.priority === 'alta' ? '🔥 *ALTA*' :
+                          info.priority === 'baixa' ? '🟢 *BAIXA*' : '🟡 *MÉDIA*';
     return (
       `🛠️ *NOVO CHAMADO DE MANUTENÇÃO - DUNEX-TI*\n\n` +
       `📋 *Protocolo:* #${info.protocol}\n` +
       `👤 *Cliente:* ${info.clientName}\n` +
       companyText +
+      `⚡ *Prioridade:* ${priorityLabel}\n` +
       `📱 *WhatsApp:* ${info.whatsapp}\n` +
       `💻 *Equipamento:* ${info.equipment}\n` +
       `⚠️ *Problema:* ${info.problem}\n\n` +
@@ -217,6 +227,7 @@ export default function App() {
     protocol: string;
     clientName: string;
     companyName?: string;
+    priority?: 'baixa' | 'media' | 'alta' | 'urgente';
     equipment: string;
     whatsapp: string;
     problem: string;
@@ -239,6 +250,7 @@ export default function App() {
 
   // Technician Edit & Search State
   const [techCompanyFilter, setTechCompanyFilter] = useState('');
+  const [techPriorityFilter, setTechPriorityFilter] = useState<string>('');
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
   const [startingTicket, setStartingTicket] = useState<Ticket | null>(null);
   const [ticketToDelete, setTicketToDelete] = useState<Ticket | null>(null);
@@ -253,6 +265,7 @@ export default function App() {
   const [ticketToEdit, setTicketToEdit] = useState<Ticket | null>(null);
   const [editClientName, setEditClientName] = useState('');
   const [editCompanyName, setEditCompanyName] = useState('');
+  const [editPriority, setEditPriority] = useState<'baixa' | 'media' | 'alta' | 'urgente'>('media');
   const [editWhatsapp, setEditWhatsapp] = useState('');
   const [editEquipment, setEditEquipment] = useState('');
   const [editProblem, setEditProblem] = useState('');
@@ -271,12 +284,17 @@ export default function App() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [tickets]);
 
-  // Filtered tickets based on company name
+  // Filtered tickets based on company name and priority
   const filteredTickets = React.useMemo(() => {
     const filter = techCompanyFilter.trim().toLowerCase();
-    if (!filter) return tickets;
-    return tickets.filter(t => (t.companyName || '').toLowerCase().includes(filter));
-  }, [tickets, techCompanyFilter]);
+    const priorityFilter = techPriorityFilter.trim().toLowerCase();
+    return tickets.filter(t => {
+      const matchCompany = !filter || (t.companyName || '').toLowerCase().includes(filter);
+      const ticketPriority = (t.priority || 'media').toLowerCase();
+      const matchPriority = !priorityFilter || ticketPriority === priorityFilter;
+      return matchCompany && matchPriority;
+    });
+  }, [tickets, techCompanyFilter, techPriorityFilter]);
 
   // Notification & Alarm Sound State
   const initialTicketsLoaded = React.useRef(false);
@@ -510,6 +528,8 @@ export default function App() {
             handleIncomingTicketAlarm({
               id: event.data.id,
               clientName: event.data.clientName,
+              companyName: event.data.companyName,
+              priority: event.data.priority || 'media',
               equipment: event.data.equipment,
               problem: event.data.problem,
               status: 'pending',
@@ -531,6 +551,8 @@ export default function App() {
             handleIncomingTicketAlarm({
               id: data.id,
               clientName: data.clientName,
+              companyName: data.companyName,
+              priority: data.priority || 'media',
               equipment: data.equipment,
               problem: data.problem,
               status: 'pending',
@@ -760,10 +782,17 @@ export default function App() {
     const currentEquipment = equipment.trim();
     const currentProblem = problem.trim();
 
+    if (!currentCompanyName) {
+      toast.error('Por favor, informe o Nome da Empresa.');
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const docRef = await addDoc(collection(db, 'tickets'), {
         clientName: currentClientName,
         companyName: currentCompanyName,
+        priority: priority,
         whatsapp: currentWhatsapp,
         equipment: currentEquipment,
         problem: currentProblem,
@@ -779,6 +808,7 @@ export default function App() {
           shortId,
           clientName: currentClientName,
           companyName: currentCompanyName,
+          priority: priority,
           equipment: currentEquipment,
           problem: currentProblem,
           status: 'pending',
@@ -801,6 +831,7 @@ export default function App() {
         protocol: shortId,
         clientName: currentClientName,
         companyName: currentCompanyName,
+        priority: priority,
         equipment: currentEquipment,
         whatsapp: currentWhatsapp,
         problem: currentProblem
@@ -810,6 +841,7 @@ export default function App() {
       setSuccessMessage(`Chamado #${shortId} registrado com sucesso!`);
       setClientName('');
       setCompanyName('');
+      setPriority('media');
       setWhatsapp('');
       setEquipment('');
       setProblem('');
@@ -874,6 +906,7 @@ export default function App() {
     setTicketToEdit(ticket);
     setEditClientName(ticket.clientName || '');
     setEditCompanyName(ticket.companyName || '');
+    setEditPriority(ticket.priority || 'media');
     setEditWhatsapp(ticket.whatsapp || '');
     setEditEquipment(ticket.equipment || '');
     setEditProblem(ticket.problem || '');
@@ -888,6 +921,10 @@ export default function App() {
 
     if (!editClientName.trim()) {
       toast.error('O nome do cliente não pode ficar em branco.');
+      return;
+    }
+    if (!editCompanyName.trim()) {
+      toast.error('O nome da empresa não pode ficar em branco.');
       return;
     }
     if (!editWhatsapp.trim()) {
@@ -908,6 +945,7 @@ export default function App() {
       const updateData: any = {
         clientName: editClientName.trim(),
         companyName: editCompanyName.trim(),
+        priority: editPriority,
         whatsapp: editWhatsapp.trim(),
         equipment: editEquipment.trim(),
         problem: editProblem.trim(),
@@ -1012,6 +1050,37 @@ export default function App() {
     }
   };
 
+  const getPriorityBadge = (priorityLevel?: string) => {
+    const p = (priorityLevel || 'media').toLowerCase();
+    switch (p) {
+      case 'urgente':
+        return (
+          <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-red-100 text-red-700 border border-red-300 flex items-center gap-1 shadow-xs animate-pulse">
+            <Flame size={12} className="text-red-600 fill-red-500" /> Urgente
+          </span>
+        );
+      case 'alta':
+        return (
+          <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-orange-100 text-orange-800 border border-orange-300 flex items-center gap-1 shadow-xs">
+            <Flame size={12} className="text-orange-600" /> Alta
+          </span>
+        );
+      case 'baixa':
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-slate-100 text-slate-700 border border-slate-200 flex items-center gap-1">
+            <Flag size={11} className="text-slate-500" /> Baixa
+          </span>
+        );
+      case 'media':
+      default:
+        return (
+          <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800 border border-blue-200 flex items-center gap-1">
+            <Flag size={11} className="text-blue-600" /> Média
+          </span>
+        );
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#212529] font-sans">
       <Toaster position="top-right" richColors closeButton />
@@ -1019,8 +1088,12 @@ export default function App() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-xs">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#0056b3] rounded-xl flex items-center justify-center text-white shadow-sm">
-              <Settings size={22} />
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center p-0.5 bg-gradient-to-br from-blue-50 to-slate-100 border border-slate-200/80 shadow-xs overflow-hidden shrink-0">
+              <img 
+                src="/assets/aistudio/DUNEX_9cfd2387.png" 
+                alt="DUNEX-TI Tecnologia Logotipo" 
+                className="w-full h-full object-contain hover:scale-105 transition-transform"
+              />
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight text-[#0056b3] leading-none">DUNEX-TI</h1>
@@ -1110,6 +1183,10 @@ export default function App() {
                       </div>
                     )}
                     <div className="flex justify-between items-center text-gray-600">
+                      <span>Prioridade:</span>
+                      <div>{getPriorityBadge(submittedTicketInfo.priority)}</div>
+                    </div>
+                    <div className="flex justify-between items-center text-gray-600">
                       <span>Equipamento:</span>
                       <span className="font-semibold text-gray-900">{submittedTicketInfo.equipment}</span>
                     </div>
@@ -1191,20 +1268,94 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Novo Campo: Nome da Empresa */}
+                    {/* Campo Obrigatório: Nome da Empresa */}
                     <div>
                       <label className="block text-sm font-semibold mb-1.5 text-gray-700">
-                        Nome da Empresa <span className="text-gray-400 font-normal text-xs">(opcional)</span>
+                        Nome da Empresa <span className="text-red-500 font-bold">*</span>
                       </label>
                       <div className="relative">
                         <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                         <input 
+                          required
                           type="text" 
                           value={companyName}
                           onChange={(e) => setCompanyName(e.target.value)}
-                          placeholder="Nome da sua empresa ou razão social"
+                          placeholder="Nome da sua empresa ou razão social *"
                           className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all"
                         />
+                      </div>
+                    </div>
+
+                    {/* Novo Campo: Prioridade do Chamado */}
+                    <div>
+                      <label className="block text-sm font-semibold mb-1.5 text-gray-700 flex items-center justify-between">
+                        <span>Nível de Prioridade <span className="text-red-500 font-bold">*</span></span>
+                        <span className="text-xs font-normal text-gray-400">Selecione a urgência do atendimento</span>
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {/* Baixa */}
+                        <button
+                          type="button"
+                          onClick={() => setPriority('baixa')}
+                          className={cn(
+                            "py-2.5 px-3 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer",
+                            priority === 'baixa'
+                              ? "bg-slate-100 border-slate-400 text-slate-800 shadow-xs ring-2 ring-slate-400/20"
+                              : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                          )}
+                        >
+                          <Flag size={16} className={priority === 'baixa' ? "text-slate-700" : "text-gray-400"} />
+                          <span>Baixa</span>
+                          <span className="text-[10px] font-normal text-gray-500">Sem pressa</span>
+                        </button>
+
+                        {/* Média */}
+                        <button
+                          type="button"
+                          onClick={() => setPriority('media')}
+                          className={cn(
+                            "py-2.5 px-3 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer",
+                            priority === 'media'
+                              ? "bg-blue-50 border-blue-400 text-blue-900 shadow-xs ring-2 ring-blue-400/20"
+                              : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                          )}
+                        >
+                          <Flag size={16} className={priority === 'media' ? "text-blue-600" : "text-gray-400"} />
+                          <span>Média</span>
+                          <span className="text-[10px] font-normal text-gray-500">Padrão</span>
+                        </button>
+
+                        {/* Alta */}
+                        <button
+                          type="button"
+                          onClick={() => setPriority('alta')}
+                          className={cn(
+                            "py-2.5 px-3 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer",
+                            priority === 'alta'
+                              ? "bg-orange-50 border-orange-400 text-orange-950 shadow-xs ring-2 ring-orange-400/20"
+                              : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                          )}
+                        >
+                          <Flame size={16} className={priority === 'alta' ? "text-orange-600" : "text-gray-400"} />
+                          <span>Alta</span>
+                          <span className="text-[10px] font-normal text-gray-500">Importante</span>
+                        </button>
+
+                        {/* Urgente */}
+                        <button
+                          type="button"
+                          onClick={() => setPriority('urgente')}
+                          className={cn(
+                            "py-2.5 px-3 rounded-xl border text-xs font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer",
+                            priority === 'urgente'
+                              ? "bg-red-50 border-red-500 text-red-950 shadow-xs ring-2 ring-red-500/25 animate-pulse"
+                              : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"
+                          )}
+                        >
+                          <Flame size={16} className={priority === 'urgente' ? "text-red-600 fill-red-500" : "text-gray-400"} />
+                          <span>Urgente</span>
+                          <span className="text-[10px] font-normal text-gray-500">Parou a empresa</span>
+                        </button>
                       </div>
                     </div>
 
@@ -1338,7 +1489,10 @@ export default function App() {
                           <HardDrive size={16} className="text-[#0056b3]" />
                           <h3 className="font-bold">{ticket.equipment}</h3>
                         </div>
-                        {getStatusBadge(ticket.status)}
+                        <div className="flex items-center gap-2">
+                          {getPriorityBadge(ticket.priority)}
+                          {getStatusBadge(ticket.status)}
+                        </div>
                       </div>
                       
                       <div className="space-y-3">
@@ -1626,9 +1780,104 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Filtro por Prioridade */}
+                  <div className="flex items-center gap-1.5 flex-wrap mt-3 pt-3 border-t border-gray-100">
+                    <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mr-1 flex items-center gap-1">
+                      Prioridade:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setTechPriorityFilter('')}
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer border",
+                        !techPriorityFilter 
+                          ? "bg-gray-800 text-white border-gray-800 shadow-xs" 
+                          : "bg-gray-50 hover:bg-gray-100 text-gray-600 border-gray-200"
+                      )}
+                    >
+                      Todas ({tickets.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTechPriorityFilter(techPriorityFilter === 'urgente' ? '' : 'urgente')}
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer border flex items-center gap-1.5",
+                        techPriorityFilter === 'urgente'
+                          ? "bg-red-600 text-white border-red-600 shadow-xs font-bold"
+                          : "bg-red-50 hover:bg-red-100 text-red-700 border-red-200"
+                      )}
+                    >
+                      <Flame size={12} className={techPriorityFilter === 'urgente' ? "text-white" : "text-red-600 fill-red-500"} />
+                      <span>Urgente</span>
+                      <span className={cn(
+                        "text-[10px] px-1.5 py-0.2 rounded-full font-bold",
+                        techPriorityFilter === 'urgente' ? "bg-white/20 text-white" : "bg-red-200 text-red-800"
+                      )}>
+                        {tickets.filter(t => (t.priority || '').toLowerCase() === 'urgente').length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTechPriorityFilter(techPriorityFilter === 'alta' ? '' : 'alta')}
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer border flex items-center gap-1.5",
+                        techPriorityFilter === 'alta'
+                          ? "bg-orange-600 text-white border-orange-600 shadow-xs font-bold"
+                          : "bg-orange-50 hover:bg-orange-100 text-orange-800 border-orange-200"
+                      )}
+                    >
+                      <Flame size={12} className={techPriorityFilter === 'alta' ? "text-white" : "text-orange-600"} />
+                      <span>Alta</span>
+                      <span className={cn(
+                        "text-[10px] px-1.5 py-0.2 rounded-full font-bold",
+                        techPriorityFilter === 'alta' ? "bg-white/20 text-white" : "bg-orange-200 text-orange-800"
+                      )}>
+                        {tickets.filter(t => (t.priority || '').toLowerCase() === 'alta').length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTechPriorityFilter(techPriorityFilter === 'media' ? '' : 'media')}
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer border flex items-center gap-1.5",
+                        techPriorityFilter === 'media'
+                          ? "bg-blue-600 text-white border-blue-600 shadow-xs font-bold"
+                          : "bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-200"
+                      )}
+                    >
+                      <Flag size={12} className={techPriorityFilter === 'media' ? "text-white" : "text-blue-600"} />
+                      <span>Média</span>
+                      <span className={cn(
+                        "text-[10px] px-1.5 py-0.2 rounded-full font-bold",
+                        techPriorityFilter === 'media' ? "bg-white/20 text-white" : "bg-blue-200 text-blue-800"
+                      )}>
+                        {tickets.filter(t => (t.priority || 'media').toLowerCase() === 'media').length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTechPriorityFilter(techPriorityFilter === 'baixa' ? '' : 'baixa')}
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer border flex items-center gap-1.5",
+                        techPriorityFilter === 'baixa'
+                          ? "bg-slate-600 text-white border-slate-600 shadow-xs font-bold"
+                          : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                      )}
+                    >
+                      <Flag size={12} className={techPriorityFilter === 'baixa' ? "text-white" : "text-slate-500"} />
+                      <span>Baixa</span>
+                      <span className={cn(
+                        "text-[10px] px-1.5 py-0.2 rounded-full font-bold",
+                        techPriorityFilter === 'baixa' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-800"
+                      )}>
+                        {tickets.filter(t => (t.priority || '').toLowerCase() === 'baixa').length}
+                      </span>
+                    </button>
+                  </div>
+
                   {/* Atalhos rápidos para as empresas cadastradas */}
                   {uniqueCompanies.length > 0 && (
-                    <div className="flex items-center gap-1.5 flex-wrap mt-3.5 pt-3.5 border-t border-gray-100">
+                    <div className="flex items-center gap-1.5 flex-wrap mt-3 pt-3 border-t border-gray-100">
                       <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mr-1 flex items-center gap-1">
                         Empresas:
                       </span>
@@ -1714,6 +1963,7 @@ export default function App() {
                                   {ticket.companyName}
                                 </button>
                               )}
+                              {getPriorityBadge(ticket.priority)}
                               {getStatusBadge(ticket.status)}
                             </div>
                             <p className="text-sm text-gray-500 flex items-center gap-1">
@@ -2046,13 +2296,14 @@ export default function App() {
 
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
-                    <Building2 size={14} className="text-[#0056b3]" /> Nome da Empresa (Opcional)
+                    <Building2 size={14} className="text-[#0056b3]" /> Nome da Empresa *
                   </label>
                   <input
                     type="text"
+                    required
                     value={editCompanyName}
                     onChange={(e) => setEditCompanyName(e.target.value)}
-                    placeholder="Ex: Padaria Estrela, Clínica Sorriso"
+                    placeholder="Nome da empresa ou razão social *"
                     className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all"
                   />
                 </div>
@@ -2086,6 +2337,82 @@ export default function App() {
                     placeholder="Ex: Notebook Dell Inspiron, PC Gamer"
                     className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all"
                   />
+                </div>
+              </div>
+
+              {/* Prioridade do Chamado (Edição) */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1.5 flex items-center gap-1.5">
+                  <Flame size={14} className="text-orange-600" /> Prioridade do Chamado *
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <label className={cn(
+                    "flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all",
+                    editPriority === 'baixa'
+                      ? "bg-slate-100 border-slate-400 text-slate-900 shadow-xs ring-1 ring-slate-400"
+                      : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                  )}>
+                    <input
+                      type="radio"
+                      name="editPriority"
+                      value="baixa"
+                      checked={editPriority === 'baixa'}
+                      onChange={() => setEditPriority('baixa')}
+                      className="text-slate-600"
+                    />
+                    <span>Baixa</span>
+                  </label>
+
+                  <label className={cn(
+                    "flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all",
+                    editPriority === 'media'
+                      ? "bg-blue-100 border-blue-400 text-blue-900 shadow-xs ring-1 ring-blue-400"
+                      : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                  )}>
+                    <input
+                      type="radio"
+                      name="editPriority"
+                      value="media"
+                      checked={editPriority === 'media'}
+                      onChange={() => setEditPriority('media')}
+                      className="text-blue-600"
+                    />
+                    <span>Média</span>
+                  </label>
+
+                  <label className={cn(
+                    "flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all",
+                    editPriority === 'alta'
+                      ? "bg-orange-100 border-orange-400 text-orange-950 shadow-xs ring-1 ring-orange-400"
+                      : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                  )}>
+                    <input
+                      type="radio"
+                      name="editPriority"
+                      value="alta"
+                      checked={editPriority === 'alta'}
+                      onChange={() => setEditPriority('alta')}
+                      className="text-orange-600"
+                    />
+                    <span>Alta</span>
+                  </label>
+
+                  <label className={cn(
+                    "flex items-center gap-2 p-2.5 rounded-xl border text-xs font-semibold cursor-pointer transition-all",
+                    editPriority === 'urgente'
+                      ? "bg-red-100 border-red-500 text-red-950 shadow-xs ring-1 ring-red-500 font-bold"
+                      : "bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100"
+                  )}>
+                    <input
+                      type="radio"
+                      name="editPriority"
+                      value="urgente"
+                      checked={editPriority === 'urgente'}
+                      onChange={() => setEditPriority('urgente')}
+                      className="text-red-600"
+                    />
+                    <span>Urgente</span>
+                  </label>
                 </div>
               </div>
 
@@ -2444,9 +2771,13 @@ export default function App() {
       {/* Footer */}
       <footer className="max-w-5xl mx-auto px-4 py-12 border-t border-gray-200 mt-12">
         <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-2 opacity-50">
-            <Settings size={20} />
-            <span className="text-sm font-bold tracking-tight">DUNEX-TI</span>
+          <div className="flex items-center gap-2.5">
+            <img 
+              src="/assets/aistudio/DUNEX_9cfd2387.png" 
+              alt="DUNEX-TI Logotipo" 
+              className="w-7 h-7 object-contain opacity-75"
+            />
+            <span className="text-sm font-bold tracking-tight text-gray-700">DUNEX-TI TECNOLOGIA</span>
           </div>
           <p className="text-sm text-gray-400">© 2026 DUNEX-TI. Todos os direitos reservados.</p>
           <div className="flex items-center gap-4">
