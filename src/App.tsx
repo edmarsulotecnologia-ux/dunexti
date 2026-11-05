@@ -63,11 +63,12 @@ import {
   Pencil,
   Save,
   Flame,
-  Flag
+  Flag,
+  FileSpreadsheet
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { cn } from './lib/utils';
-import { generateTicketPDF, safeFormatDate } from './lib/pdfGenerator';
+import { generateTicketPDF, safeFormatDate, safeGetDate } from './lib/pdfGenerator';
 
 // Types
 interface Ticket {
@@ -888,6 +889,128 @@ export default function App() {
     }
   };
 
+  const handleExportCSV = () => {
+    if (filteredTickets.length === 0) {
+      toast.warning('Nenhum chamado listado para exportar com os filtros atuais.');
+      return;
+    }
+
+    try {
+      // Tradução dos status para o relatório contábil/gerencial
+      const translateStatus = (s: Ticket['status']) => {
+        switch (s) {
+          case 'pending': return 'Pendente';
+          case 'in-progress': return 'Em Manutenção';
+          case 'completed': return 'Concluída';
+          case 'needs-next-step': return 'Nova Etapa';
+          case 'completed-no-test': return 'Concluída (Sem Teste)';
+          default: return s || '—';
+        }
+      };
+
+      const translatePriority = (p?: string) => {
+        switch ((p || 'media').toLowerCase()) {
+          case 'urgente': return 'Urgente';
+          case 'alta': return 'Alta';
+          case 'baixa': return 'Baixa';
+          case 'media':
+          default: return 'Média';
+        }
+      };
+
+      // Cabeçalhos em português com foco em gestão contábil e operacional
+      const headers = [
+        'Protocolo O.S.',
+        'Empresa / Razão Social',
+        'Nome do Contato',
+        'WhatsApp',
+        'Equipamento',
+        'Prioridade',
+        'Status do Chamado',
+        'Data de Abertura',
+        'Data / Hora Início',
+        'Data / Hora Término',
+        'Tempo Total de Atendimento',
+        'Problema Relatado',
+        'Solução Técnica Aplicada',
+        'Recomendações Técnicas',
+        'ID Técnico Responsável'
+      ];
+
+      // Sanitiza células para formato CSV padrão Excel (com aspas duplas escapadas)
+      const formatCell = (val: any) => {
+        if (val === undefined || val === null) return '""';
+        const str = String(val).replace(/"/g, '""');
+        return `"${str}"`;
+      };
+
+      const rows = filteredTickets.map(t => {
+        const osId = (t.id || '').slice(0, 8).toUpperCase();
+        const dateCreated = safeFormatDate(t.createdAt, 'dd/MM/yyyy HH:mm:ss', '—');
+        const dateStart = safeFormatDate(t.startTime, 'dd/MM/yyyy HH:mm:ss', '—');
+        const dateEnd = safeFormatDate(t.endTime, 'dd/MM/yyyy HH:mm:ss', '—');
+
+        // Cálculo do tempo total
+        let durationStr = '—';
+        const sDate = safeGetDate(t.startTime);
+        const eDate = safeGetDate(t.endTime);
+        if (sDate && eDate) {
+          const diffMs = eDate.getTime() - sDate.getTime();
+          if (diffMs > 0) {
+            const diffMins = Math.floor(diffMs / (1000 * 60));
+            const hours = Math.floor(diffMins / 60);
+            const mins = diffMins % 60;
+            durationStr = hours > 0 ? `${hours}h ${mins}min` : `${mins} min`;
+          }
+        }
+
+        return [
+          formatCell(`#${osId}`),
+          formatCell(t.companyName || 'Não informada'),
+          formatCell(t.clientName || ''),
+          formatCell(t.whatsapp || ''),
+          formatCell(t.equipment || ''),
+          formatCell(translatePriority(t.priority)),
+          formatCell(translateStatus(t.status)),
+          formatCell(dateCreated),
+          formatCell(dateStart),
+          formatCell(dateEnd),
+          formatCell(durationStr),
+          formatCell(t.problem || ''),
+          formatCell(t.solution || ''),
+          formatCell(t.recommendation || ''),
+          formatCell(t.technicianId || 'tech-mardu2020')
+        ].join(';'); // Ponto e vírgula como delimitador padrão para o Excel em português
+      });
+
+      // Byte Order Mark (BOM) UTF-8 (\uFEFF) para garantir que acentos (ç, ã, é) abram perfeitamente no Excel
+      const csvContent = '\uFEFF' + [headers.map(h => formatCell(h)).join(';'), ...rows].join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      // Nome do arquivo com timestamp e filtro de empresa caso ativo
+      const timestamp = format(new Date(), 'yyyy-MM-dd_HHmm');
+      const companySuffix = techCompanyFilter ? `_${techCompanyFilter.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+      const prioritySuffix = techPriorityFilter ? `_${techPriorityFilter}` : '';
+      const fileName = `DUNEX_TI_Relatorio_Chamados${companySuffix}${prioritySuffix}_${timestamp}.csv`;
+
+      link.href = url;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success('Relatório contábil exportado com sucesso!', {
+        description: `${filteredTickets.length} chamados exportados para ${fileName}`
+      });
+    } catch (err) {
+      console.error('Erro ao exportar chamados para CSV:', err);
+      toast.error('Erro ao gerar arquivo de exportação.');
+    }
+  };
+
   const handleDeleteTicket = async (ticket: Ticket) => {
     try {
       setIsDeleting(true);
@@ -1645,6 +1768,17 @@ export default function App() {
                       <span>Testar Som</span>
                     </button>
 
+                    {/* Botão Exportar Relatório Contábil (CSV/Excel) */}
+                    <button
+                      type="button"
+                      onClick={handleExportCSV}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm shadow-emerald-600/20"
+                      title="Exportar todos os chamados filtrados para CSV / Excel (Gestão Contábil)"
+                    >
+                      <FileSpreadsheet size={15} />
+                      <span>Exportar CSV / Excel</span>
+                    </button>
+
                     <button 
                       onClick={() => setShowShareModal(true)}
                       className="bg-blue-50 hover:bg-blue-100 text-[#0056b3] border border-blue-200 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
@@ -1754,7 +1888,7 @@ export default function App() {
                     <div className="flex items-center gap-2 text-xs text-gray-500 shrink-0 self-end sm:self-center font-medium">
                       <Filter size={14} className="text-[#0056b3]" />
                       <span>
-                        {techCompanyFilter ? (
+                        {techCompanyFilter || techPriorityFilter ? (
                           <>
                             Exibindo <strong className="text-gray-900 font-bold">{filteredTickets.length}</strong> de {tickets.length} chamados
                           </>
@@ -1764,15 +1898,27 @@ export default function App() {
                           </>
                         )}
                       </span>
-                      {techCompanyFilter && (
+                      {(techCompanyFilter || techPriorityFilter) && (
                         <button
                           type="button"
-                          onClick={() => setTechCompanyFilter('')}
+                          onClick={() => {
+                            setTechCompanyFilter('');
+                            setTechPriorityFilter('');
+                          }}
                           className="ml-1 text-xs text-[#0056b3] hover:underline font-bold cursor-pointer"
                         >
                           (Limpar)
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={handleExportCSV}
+                        className="ml-2 inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                        title="Baixar lista filtrada em formato compatível com Excel"
+                      >
+                        <FileSpreadsheet size={13} className="text-emerald-700" />
+                        <span>Baixar CSV</span>
+                      </button>
                     </div>
                   </div>
 
