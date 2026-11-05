@@ -1088,12 +1088,8 @@ export default function App() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10 shadow-xs">
         <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center p-0.5 bg-gradient-to-br from-blue-50 to-slate-100 border border-slate-200/80 shadow-xs overflow-hidden shrink-0">
-              <img 
-                src="/assets/aistudio/DUNEX_9cfd2387.png" 
-                alt="DUNEX-TI Tecnologia Logotipo" 
-                className="w-full h-full object-contain hover:scale-105 transition-transform"
-              />
+            <div className="w-10 h-10 bg-[#0056b3] rounded-xl flex items-center justify-center text-white shadow-sm">
+              <Settings size={22} />
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight text-[#0056b3] leading-none">DUNEX-TI</h1>
@@ -2771,13 +2767,9 @@ export default function App() {
       {/* Footer */}
       <footer className="max-w-5xl mx-auto px-4 py-12 border-t border-gray-200 mt-12">
         <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-2.5">
-            <img 
-              src="/assets/aistudio/DUNEX_9cfd2387.png" 
-              alt="DUNEX-TI Logotipo" 
-              className="w-7 h-7 object-contain opacity-75"
-            />
-            <span className="text-sm font-bold tracking-tight text-gray-700">DUNEX-TI TECNOLOGIA</span>
+          <div className="flex items-center gap-2 opacity-50">
+            <Settings size={20} />
+            <span className="text-sm font-bold tracking-tight">DUNEX-TI</span>
           </div>
           <p className="text-sm text-gray-400">© 2026 DUNEX-TI. Todos os direitos reservados.</p>
           <div className="flex items-center gap-4">
