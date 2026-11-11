@@ -6,9 +6,15 @@
       "type": "object",
       "properties": {
         "clientName": { "type": "string", "description": "Name of the client" },
+        "companyName": { "type": "string", "description": "Company name of the client" },
         "whatsapp": { "type": "string", "description": "WhatsApp number" },
         "equipment": { "type": "string", "description": "Equipment name or number" },
         "problem": { "type": "string", "description": "Description of the problem" },
+        "priority": {
+          "type": "string",
+          "enum": ["baixa", "media", "alta", "urgente"],
+          "description": "Priority level of the ticket"
+        },
         "createdAt": { "type": "string", "format": "date-time", "description": "Time the ticket was created" },
         "status": { 
           "type": "string", 
@@ -19,9 +25,10 @@
         "startTime": { "type": "string", "format": "date-time", "description": "Time maintenance started" },
         "endTime": { "type": "string", "format": "date-time", "description": "Time maintenance ended" },
         "solution": { "type": "string", "description": "Solution provided by the technician" },
-        "recommendation": { "type": "string", "description": "Technician's recommendations" }
+        "recommendation": { "type": "string", "description": "Technician's recommendations" },
+        "serviceValue": { "type": "number", "description": "Total value of the specified technical services in BRL" }
       },
-      "required": ["clientName", "whatsapp", "equipment", "problem", "createdAt", "status"]
+      "required": ["clientName", "companyName", "whatsapp", "equipment", "problem", "createdAt", "status"]
     }
   },
   "firestore": {

@@ -19,6 +19,7 @@ service cloud.firestore {
     //   - endTime: timestamp (optional)
     //   - solution: string (optional)
     //   - recommendation: string (optional)
+    //   - serviceValue: number (optional)
     //
     // ===============================================================
 
@@ -37,9 +38,12 @@ service cloud.firestore {
     function isValidTicket(data) {
       return data.keys().hasAll(['clientName', 'whatsapp', 'equipment', 'problem', 'createdAt', 'status']) &&
              data.clientName is string && data.clientName.size() > 0 && data.clientName.size() < 100 &&
+             (!('companyName' in data) || (data.companyName is string && data.companyName.size() < 150)) &&
+             (!('priority' in data) || (data.priority in ['baixa', 'media', 'alta', 'urgente'])) &&
              data.whatsapp is string && data.whatsapp.size() > 0 && data.whatsapp.size() < 20 &&
              data.equipment is string && data.equipment.size() > 0 && data.equipment.size() < 100 &&
              data.problem is string && data.problem.size() > 0 && data.problem.size() < 1000 &&
+             (!('serviceValue' in data) || data.serviceValue == null || (data.serviceValue is number && data.serviceValue >= 0)) &&
              data.status in ['pending', 'in-progress', 'completed', 'needs-next-step', 'completed-no-test'];
     }
 
