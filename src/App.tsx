@@ -64,11 +64,13 @@ import {
   Save,
   Flame,
   Flag,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Calendar,
+  DollarSign
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { cn } from './lib/utils';
-import { generateTicketPDF, safeFormatDate, safeGetDate } from './lib/pdfGenerator';
+import { generateTicketPDF, safeFormatDate, safeGetDate, formatCurrencyBRL } from './lib/pdfGenerator';
 
 // Types
 interface Ticket {
@@ -86,6 +88,26 @@ interface Ticket {
   endTime?: any;
   solution?: string;
   recommendation?: string;
+  serviceValue?: number | null;
+}
+
+function parseServiceValueInput(raw: string): { valid: boolean; value: number | null } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { valid: true, value: null };
+  let cleaned = trimmed.replace(/[R$\s]/gi, '');
+  if (cleaned.includes(',')) {
+    cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+  }
+  const num = Number(cleaned);
+  if (isNaN(num) || !isFinite(num) || num < 0) {
+    return { valid: false, value: null };
+  }
+  return { valid: true, value: Math.round(num * 100) / 100 };
+}
+
+function formatServiceValueForInput(value?: number | null): string {
+  if (typeof value !== 'number' || !isFinite(value)) return '';
+  return value.toFixed(2).replace('.', ',');
 }
 
 // In-memory 16-bit PCM WAV Chime Generator (Guarantees zero-network audio playback in all browsers)
@@ -252,6 +274,8 @@ export default function App() {
   // Technician Edit & Search State
   const [techCompanyFilter, setTechCompanyFilter] = useState('');
   const [techPriorityFilter, setTechPriorityFilter] = useState<string>('');
+  const [techStartDate, setTechStartDate] = useState('');
+  const [techEndDate, setTechEndDate] = useState('');
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
   const [startingTicket, setStartingTicket] = useState<Ticket | null>(null);
   const [ticketToDelete, setTicketToDelete] = useState<Ticket | null>(null);
@@ -260,6 +284,7 @@ export default function App() {
   const [customStartTime, setCustomStartTime] = useState(format(new Date(), 'HH:mm'));
   const [solution, setSolution] = useState('');
   const [recommendation, setRecommendation] = useState('');
+  const [serviceValueInput, setServiceValueInput] = useState('');
   const [status, setStatus] = useState<Ticket['status']>('completed');
 
   // Full Ticket Editing State (Technician)
@@ -273,6 +298,7 @@ export default function App() {
   const [editStatus, setEditStatus] = useState<Ticket['status']>('pending');
   const [editSolution, setEditSolution] = useState('');
   const [editRecommendation, setEditRecommendation] = useState('');
+  const [editServiceValue, setEditServiceValue] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Unique company names from tickets that have a company name defined
@@ -285,17 +311,46 @@ export default function App() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [tickets]);
 
-  // Filtered tickets based on company name and priority
+  // Filtered tickets based on company name, priority, and date range
   const filteredTickets = React.useMemo(() => {
     const filter = techCompanyFilter.trim().toLowerCase();
     const priorityFilter = techPriorityFilter.trim().toLowerCase();
+    const startBound = techStartDate ? new Date(`${techStartDate}T00:00:00.000`) : null;
+    const endBound = techEndDate ? new Date(`${techEndDate}T23:59:59.999`) : null;
+    const hasValidStart = startBound && !isNaN(startBound.getTime());
+    const hasValidEnd = endBound && !isNaN(endBound.getTime());
+
     return tickets.filter(t => {
       const matchCompany = !filter || (t.companyName || '').toLowerCase().includes(filter);
       const ticketPriority = (t.priority || 'media').toLowerCase();
       const matchPriority = !priorityFilter || ticketPriority === priorityFilter;
-      return matchCompany && matchPriority;
+
+      let matchDate = true;
+      if (hasValidStart || hasValidEnd) {
+        const ticketDate = safeGetDate(t.createdAt);
+        if (!ticketDate) {
+          matchDate = false;
+        } else {
+          if (hasValidStart && ticketDate < startBound!) matchDate = false;
+          if (hasValidEnd && ticketDate > endBound!) matchDate = false;
+        }
+      }
+
+      return matchCompany && matchPriority && matchDate;
     });
-  }, [tickets, techCompanyFilter, techPriorityFilter]);
+  }, [tickets, techCompanyFilter, techPriorityFilter, techStartDate, techEndDate]);
+
+  const filteredServiceSummary = React.useMemo(() => {
+    let total = 0;
+    let pricedCount = 0;
+    filteredTickets.forEach(t => {
+      if (typeof t.serviceValue === 'number' && isFinite(t.serviceValue)) {
+        total += t.serviceValue;
+        pricedCount += 1;
+      }
+    });
+    return { total, pricedCount };
+  }, [filteredTickets]);
 
   // Notification & Alarm Sound State
   const initialTicketsLoaded = React.useRef(false);
@@ -729,6 +784,9 @@ export default function App() {
     signOut(auth);
     setIsTechLoggedIn(false);
     setTechCompanyFilter('');
+    setTechPriorityFilter('');
+    setTechStartDate('');
+    setTechEndDate('');
     try {
       localStorage.removeItem('dutec_tech_auth');
     } catch {}
@@ -931,6 +989,7 @@ export default function App() {
         'Data / Hora Início',
         'Data / Hora Término',
         'Tempo Total de Atendimento',
+        'Valor Total dos Serviços (R$)',
         'Problema Relatado',
         'Solução Técnica Aplicada',
         'Recomendações Técnicas',
@@ -964,6 +1023,11 @@ export default function App() {
           }
         }
 
+        const formattedServiceValue =
+          typeof t.serviceValue === 'number' && isFinite(t.serviceValue)
+            ? t.serviceValue.toFixed(2).replace('.', ',')
+            : '';
+
         return [
           formatCell(`#${osId}`),
           formatCell(t.companyName || 'Não informada'),
@@ -976,6 +1040,7 @@ export default function App() {
           formatCell(dateStart),
           formatCell(dateEnd),
           formatCell(durationStr),
+          formatCell(formattedServiceValue),
           formatCell(t.problem || ''),
           formatCell(t.solution || ''),
           formatCell(t.recommendation || ''),
@@ -989,11 +1054,14 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
 
-      // Nome do arquivo com timestamp e filtro de empresa caso ativo
+      // Nome do arquivo com timestamp e filtros caso ativos
       const timestamp = format(new Date(), 'yyyy-MM-dd_HHmm');
       const companySuffix = techCompanyFilter ? `_${techCompanyFilter.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
       const prioritySuffix = techPriorityFilter ? `_${techPriorityFilter}` : '';
-      const fileName = `DUNEX_TI_Relatorio_Chamados${companySuffix}${prioritySuffix}_${timestamp}.csv`;
+      const dateSuffix = (techStartDate || techEndDate)
+        ? `_periodo_${techStartDate || 'inicio'}_a_${techEndDate || 'hoje'}`
+        : '';
+      const fileName = `DUNEX_TI_Relatorio_Chamados${companySuffix}${prioritySuffix}${dateSuffix}_${timestamp}.csv`;
 
       link.href = url;
       link.setAttribute('download', fileName);
@@ -1036,6 +1104,7 @@ export default function App() {
     setEditStatus(ticket.status || 'pending');
     setEditSolution(ticket.solution || '');
     setEditRecommendation(ticket.recommendation || '');
+    setEditServiceValue(formatServiceValueForInput(ticket.serviceValue));
   };
 
   const handleSaveTicketEdit = async (e: React.FormEvent) => {
@@ -1063,6 +1132,12 @@ export default function App() {
       return;
     }
 
+    const parsedServiceValue = parseServiceValueInput(editServiceValue);
+    if (!parsedServiceValue.valid) {
+      toast.error('Valor total dos serviços inválido. Digite um valor numérico positivo (ex: 150,00).');
+      return;
+    }
+
     try {
       setIsSavingEdit(true);
       const updateData: any = {
@@ -1074,7 +1149,8 @@ export default function App() {
         problem: editProblem.trim(),
         status: editStatus,
         solution: editSolution.trim(),
-        recommendation: editRecommendation.trim()
+        recommendation: editRecommendation.trim(),
+        serviceValue: parsedServiceValue.value
       };
 
       // Se o status for alterado para concluído e ainda não tiver endTime, define término
@@ -1113,11 +1189,18 @@ export default function App() {
       return;
     }
 
+    const parsedServiceValue = parseServiceValueInput(serviceValueInput);
+    if (!parsedServiceValue.valid) {
+      toast.error('Valor total dos serviços inválido. Digite um valor numérico positivo (ex: 150,00).');
+      return;
+    }
+
     const ticketToPrint: Ticket = {
       ...editingTicket,
       status,
       solution,
       recommendation,
+      serviceValue: parsedServiceValue.value,
       endTime: new Date()
     };
 
@@ -1126,6 +1209,7 @@ export default function App() {
         status,
         solution,
         recommendation,
+        serviceValue: parsedServiceValue.value,
         endTime: serverTimestamp()
       });
       
@@ -1133,6 +1217,7 @@ export default function App() {
       setEditingTicket(null);
       setSolution('');
       setRecommendation('');
+      setServiceValueInput('');
 
       if (shouldDownloadPdf) {
         try {
@@ -1885,10 +1970,10 @@ export default function App() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 text-xs text-gray-500 shrink-0 self-end sm:self-center font-medium">
+                    <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500 shrink-0 self-end sm:self-center font-medium">
                       <Filter size={14} className="text-[#0056b3]" />
                       <span>
-                        {techCompanyFilter || techPriorityFilter ? (
+                        {techCompanyFilter || techPriorityFilter || techStartDate || techEndDate ? (
                           <>
                             Exibindo <strong className="text-gray-900 font-bold">{filteredTickets.length}</strong> de {tickets.length} chamados
                           </>
@@ -1898,12 +1983,23 @@ export default function App() {
                           </>
                         )}
                       </span>
-                      {(techCompanyFilter || techPriorityFilter) && (
+                      {filteredServiceSummary.pricedCount > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-md text-xs font-bold"
+                          title={`Soma de ${filteredServiceSummary.pricedCount} chamado(s) com valor definido na listagem atual`}
+                        >
+                          <DollarSign size={12} className="text-emerald-600" />
+                          <span>Total: {formatCurrencyBRL(filteredServiceSummary.total)}</span>
+                        </span>
+                      )}
+                      {(techCompanyFilter || techPriorityFilter || techStartDate || techEndDate) && (
                         <button
                           type="button"
                           onClick={() => {
                             setTechCompanyFilter('');
                             setTechPriorityFilter('');
+                            setTechStartDate('');
+                            setTechEndDate('');
                           }}
                           className="ml-1 text-xs text-[#0056b3] hover:underline font-bold cursor-pointer"
                         >
@@ -1919,6 +2015,115 @@ export default function App() {
                         <FileSpreadsheet size={13} className="text-emerald-700" />
                         <span>Baixar CSV</span>
                       </button>
+                    </div>
+                  </div>
+
+                  {/* Filtro por Intervalo de Datas (Período) */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mt-3 pt-3 border-t border-gray-100">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1 mr-1">
+                        <Calendar size={13} className="text-[#0056b3]" />
+                        Período:
+                      </span>
+
+                      <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 focus-within:bg-white focus-within:border-[#0056b3] focus-within:ring-2 focus-within:ring-[#0056b3]/15 transition-all">
+                        <span className="text-[11px] font-semibold text-gray-500">De:</span>
+                        <input
+                          type="date"
+                          aria-label="Data inicial"
+                          value={techStartDate}
+                          onChange={(e) => setTechStartDate(e.target.value)}
+                          className="bg-transparent text-xs font-medium text-gray-800 outline-none cursor-pointer"
+                        />
+                        {techStartDate && (
+                          <button
+                            type="button"
+                            onClick={() => setTechStartDate('')}
+                            className="text-gray-400 hover:text-gray-700 p-0.5 cursor-pointer"
+                            title="Limpar data inicial"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl px-2.5 py-1.5 focus-within:bg-white focus-within:border-[#0056b3] focus-within:ring-2 focus-within:ring-[#0056b3]/15 transition-all">
+                        <span className="text-[11px] font-semibold text-gray-500">Até:</span>
+                        <input
+                          type="date"
+                          aria-label="Data final"
+                          value={techEndDate}
+                          onChange={(e) => setTechEndDate(e.target.value)}
+                          className="bg-transparent text-xs font-medium text-gray-800 outline-none cursor-pointer"
+                        />
+                        {techEndDate && (
+                          <button
+                            type="button"
+                            onClick={() => setTechEndDate('')}
+                            className="text-gray-400 hover:text-gray-700 p-0.5 cursor-pointer"
+                            title="Limpar data final"
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                      </div>
+
+                      {techStartDate && techEndDate && techStartDate > techEndDate && (
+                        <span className="text-[11px] font-semibold text-red-600 bg-red-50 border border-red-200 px-2 py-1 rounded-lg">
+                          Data inicial maior que a final
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const today = format(new Date(), 'yyyy-MM-dd');
+                          setTechStartDate(today);
+                          setTechEndDate(today);
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-gray-50 hover:bg-blue-50 text-gray-600 hover:text-[#0056b3] border border-gray-200 hover:border-blue-200 transition-all cursor-pointer"
+                      >
+                        Hoje
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const end = new Date();
+                          const start = new Date();
+                          start.setDate(end.getDate() - 6);
+                          setTechStartDate(format(start, 'yyyy-MM-dd'));
+                          setTechEndDate(format(end, 'yyyy-MM-dd'));
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-gray-50 hover:bg-blue-50 text-gray-600 hover:text-[#0056b3] border border-gray-200 hover:border-blue-200 transition-all cursor-pointer"
+                      >
+                        Últimos 7 dias
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const now = new Date();
+                          const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+                          setTechStartDate(format(firstDay, 'yyyy-MM-dd'));
+                          setTechEndDate(format(now, 'yyyy-MM-dd'));
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-gray-50 hover:bg-blue-50 text-gray-600 hover:text-[#0056b3] border border-gray-200 hover:border-blue-200 transition-all cursor-pointer"
+                      >
+                        Este mês
+                      </button>
+                      {(techStartDate || techEndDate) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTechStartDate('');
+                            setTechEndDate('');
+                          }}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-all cursor-pointer flex items-center gap-1"
+                        >
+                          <X size={11} /> Limpar datas
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -2074,17 +2279,28 @@ export default function App() {
                     </div>
                   ) : filteredTickets.length === 0 ? (
                     <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-gray-300 p-6">
-                      <Building2 size={42} className="text-gray-300 mx-auto mb-3" />
+                      <Filter size={42} className="text-gray-300 mx-auto mb-3" />
                       <h4 className="font-bold text-gray-800 text-base mb-1">Nenhum chamado encontrado</h4>
-                      <p className="text-gray-500 text-sm max-w-sm mx-auto mb-4">
-                        Não localizamos chamados cadastrados para a empresa <strong className="text-gray-900 font-semibold">"{techCompanyFilter}"</strong>.
+                      <p className="text-gray-500 text-sm max-w-md mx-auto mb-4">
+                        {techCompanyFilter ? (
+                          <>
+                            Não localizamos chamados para os filtros aplicados (empresa <strong className="text-gray-900 font-semibold">"{techCompanyFilter}"</strong>).
+                          </>
+                        ) : (
+                          <>Nenhum chamado encontrado dentro do período ou filtros selecionados.</>
+                        )}
                       </p>
                       <button
                         type="button"
-                        onClick={() => setTechCompanyFilter('')}
+                        onClick={() => {
+                          setTechCompanyFilter('');
+                          setTechPriorityFilter('');
+                          setTechStartDate('');
+                          setTechEndDate('');
+                        }}
                         className="px-4 py-2 bg-[#0056b3] text-white rounded-xl text-xs font-bold hover:bg-[#004494] transition-all cursor-pointer shadow-xs inline-flex items-center gap-1.5"
                       >
-                        <X size={14} /> Limpar Filtro de Busca
+                        <X size={14} /> Limpar Todos os Filtros
                       </button>
                     </div>
                   ) : (
@@ -2107,6 +2323,15 @@ export default function App() {
                               )}
                               {getPriorityBadge(ticket.priority)}
                               {getStatusBadge(ticket.status)}
+                              {typeof ticket.serviceValue === 'number' && isFinite(ticket.serviceValue) && (
+                                <span
+                                  className="px-2.5 py-1 text-xs font-bold rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-1 shadow-2xs"
+                                  title="Valor total dos serviços especificados"
+                                >
+                                  <DollarSign size={12} className="text-emerald-600" />
+                                  {formatCurrencyBRL(ticket.serviceValue)}
+                                </span>
+                              )}
                             </div>
                             <p className="text-sm text-gray-500 flex items-center gap-1">
                               <Clock size={14} /> 
@@ -2132,6 +2357,7 @@ export default function App() {
                                   setEditingTicket(ticket);
                                   setSolution(ticket.solution || '');
                                   setRecommendation(ticket.recommendation || '');
+                                  setServiceValueInput(formatServiceValueForInput(ticket.serviceValue));
                                   setStatus('completed');
                                 }}
                                 className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-700 transition-all flex items-center gap-2 cursor-pointer shadow-sm"
@@ -2202,7 +2428,7 @@ export default function App() {
 
                         {(ticket.status === 'completed' || ticket.status === 'needs-next-step' || ticket.status === 'completed-no-test') && (
                           <div className="mt-6 pt-6 border-t border-gray-100 bg-gray-50 -mx-6 -mb-6 p-6 rounded-b-xl space-y-4">
-                            <div className="grid md:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                               <div>
                                 <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Início</span>
                                 <p className="text-sm font-medium">{safeFormatDate(ticket.startTime, 'HH:mm', '-')}</p>
@@ -2210,6 +2436,19 @@ export default function App() {
                               <div>
                                 <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Término</span>
                                 <p className="text-sm font-medium">{safeFormatDate(ticket.endTime, 'HH:mm', '-')}</p>
+                              </div>
+                              <div>
+                                <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Valor Total dos Serviços</span>
+                                <p className={cn(
+                                  "text-sm font-bold flex items-center gap-1",
+                                  typeof ticket.serviceValue === 'number' && isFinite(ticket.serviceValue)
+                                    ? "text-emerald-700"
+                                    : "text-gray-400 font-medium"
+                                )}>
+                                  {typeof ticket.serviceValue === 'number' && isFinite(ticket.serviceValue)
+                                    ? formatCurrencyBRL(ticket.serviceValue)
+                                    : 'Não informado'}
+                                </p>
                               </div>
                             </div>
                             <div>
@@ -2300,15 +2539,20 @@ export default function App() {
 
       {/* Modal Finalizar Manutenção */}
       {editingTicket && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-4 overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[92vh]">
+            <div className="p-5 sm:p-6 border-b border-gray-100 flex items-center justify-between shrink-0">
               <h3 className="text-xl font-bold">Finalizar Manutenção</h3>
-              <button onClick={() => setEditingTicket(null)} className="text-gray-400 hover:text-gray-600">
-                <AlertCircle size={24} />
+              <button
+                type="button"
+                onClick={() => setEditingTicket(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                title="Fechar"
+              >
+                <X size={20} />
               </button>
             </div>
-            <form onSubmit={(e) => handleCompleteMaintenance(e, true)} className="p-6 space-y-5">
+            <form onSubmit={(e) => handleCompleteMaintenance(e, true)} className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Hora Início</label>
@@ -2345,6 +2589,32 @@ export default function App() {
                   placeholder="Dicas ou observações para o cliente..."
                   className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all resize-none"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold mb-1.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <DollarSign size={16} className="text-emerald-600" />
+                    Valor Total dos Serviços (R$)
+                  </span>
+                  <span className="text-xs font-normal text-gray-400">Opcional</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                    R$
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={serviceValueInput}
+                    onChange={(e) => setServiceValueInput(e.target.value)}
+                    placeholder="0,00"
+                    className="w-full pl-14 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl font-semibold text-gray-900 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all"
+                  />
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Informe o valor total cobrado pelos serviços realizados (será incluído no PDF e na exportação contábil CSV).
+                </p>
               </div>
 
               <div>
@@ -2692,6 +2962,32 @@ export default function App() {
                   placeholder="Dicas de uso, cuidados preventivos ou recomendações..."
                   className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-[#0056b3]/20 focus:border-[#0056b3] outline-none transition-all resize-none"
                 />
+              </div>
+
+              {/* Valor Total dos Serviços Especificados */}
+              <div className="p-3.5 rounded-xl bg-emerald-50/70 border border-emerald-200">
+                <label className="block text-xs font-bold uppercase tracking-wider text-emerald-800 mb-1.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <DollarSign size={14} className="text-emerald-700" /> Valor Total dos Serviços Especificados (R$)
+                  </span>
+                  <span className="text-[11px] font-medium normal-case text-emerald-700/80">Opcional</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                    R$
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={editServiceValue}
+                    onChange={(e) => setEditServiceValue(e.target.value)}
+                    placeholder="0,00"
+                    className="w-full pl-12 pr-3.5 py-2.5 bg-white border border-emerald-200 rounded-xl text-sm font-bold text-gray-900 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 outline-none transition-all"
+                  />
+                </div>
+                <p className="text-[11px] text-emerald-700 mt-1.5">
+                  Deixe em branco se não houver valor definido. Exibido no painel técnico, no PDF e na planilha CSV contábil.
+                </p>
               </div>
 
               {/* Modal Footer Buttons */}
